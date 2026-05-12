@@ -134,8 +134,9 @@ Write-Host "  Proxy:       http://localhost:$ProxyPort/fetch_closes" -Foreground
 Write-Host "  Press Ctrl+C to stop." -ForegroundColor DarkGray
 Write-Host ""
 
-# Open calculator in Chrome with remote-debugging-port=9222 so the SectorSurfer
-# scraper can later open a new tab in the same window (real profile + LastPass).
+# Open the calculator in Chrome. The SectorSurfer scraper manages its own
+# Playwright Chromium browser (persistent profile in .browser_profile/) and
+# does not need to attach to this window.
 $pf86 = [Environment]::GetEnvironmentVariable("PROGRAMFILES(X86)")
 $chromeCandidates = @(
     "$env:PROGRAMFILES\Google\Chrome\Application\chrome.exe",
@@ -144,11 +145,11 @@ $chromeCandidates = @(
 )
 $chrome = $chromeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($chrome) {
-    Start-Process $chrome -ArgumentList "--remote-debugging-port=9222", "--no-first-run", $url
-    Write-Host "  Chrome:      debug port 9222 enabled (scraper will use this window)" -ForegroundColor DarkGray
+    Start-Process $chrome -ArgumentList "--no-first-run", $url
+    Write-Host "  Chrome:      opened" -ForegroundColor DarkGray
 } else {
     try { Start-Process $url } catch { }
-    Write-Host "  Chrome not found - scraper will open its own browser." -ForegroundColor DarkYellow
+    Write-Host "  Chrome not found - opening default browser." -ForegroundColor DarkYellow
 }
 
 Set-Location $ProjectRoot
