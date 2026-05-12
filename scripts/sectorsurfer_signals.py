@@ -212,33 +212,82 @@ _EXTRACT_JS = r"""
 
 # ── credential storage ────────────────────────────────────────────────────────
 
-CREDS_FILE = PROFILE_DIR / "creds.json"
+_KEYRING_SERVICE = "sectorsurfer"
+CREDS_FILE = PROFILE_DIR / "creds.json"   # kept for one-time migration only
 
 
-def _load_creds() -> dict | None:
-    """Return stored {username, password} or None if absent / corrupt."""
+def _load_creds_legacy() -> dict | None:
+    """Read credentials from the old plaintext creds.json (migration path only)."""
     if not CREDS_FILE.exists():
-        _log(f"No credentials file at {CREDS_FILE}")
         return None
     try:
         data = json.loads(CREDS_FILE.read_text(encoding="utf-8"))
         if data.get("username") and data.get("password"):
-            _log(f"Loaded stored credentials for '{data['username']}'.")
+            _log(f"Found legacy creds.json for '{data['username']}'.")
             return data
-        _log("Credentials file exists but is missing username or password.")
     except Exception as exc:
-        _log(f"Failed to read credentials file: {exc}")
+        _log(f"Failed to read legacy creds.json: {exc}")
+    return None
+
+
+def _load_creds() -> dict | None:
+    """
+    Return stored {username, password} from the OS keyring, or None.
+
+    On Windows the keyring backend is Windows Credential Manager (DPAPI-
+    encrypted).  On macOS it is Keychain; on Linux, Secret Service.
+
+    If nothing is found in the keyring but a legacy creds.json exists, the
+    credentials are migrated to the keyring and the plaintext file is deleted.
+    """
+    try:
+        import keyring
+    except ImportError:
+        _log("keyring not installed — cannot load credentials.")
+        return None
+
+    try:
+        username = keyring.get_password(_KEYRING_SERVICE, "username")
+        password = keyring.get_password(_KEYRING_SERVICE, "password")
+    except Exception as exc:
+        _log(f"keyring read failed: {exc}")
+        return None
+
+    if username and password:
+        _log(f"Loaded stored credentials for '{username}' from keyring.")
+        return {"username": username, "password": password}
+
+    # Nothing in keyring — check for legacy plaintext file and migrate.
+    legacy = _load_creds_legacy()
+    if legacy:
+        _log("Migrating credentials from creds.json → keyring...")
+        try:
+            keyring.set_password(_KEYRING_SERVICE, "username", legacy["username"])
+            keyring.set_password(_KEYRING_SERVICE, "password", legacy["password"])
+            CREDS_FILE.unlink(missing_ok=True)
+            _log("Migration complete — creds.json deleted.")
+        except Exception as exc:
+            _log(f"Migration to keyring failed ({exc}) — creds.json kept.")
+        return legacy
+
+    _log("No stored credentials found in keyring.")
     return None
 
 
 def _save_creds(username: str, password: str) -> None:
-    """Persist credentials to the profile directory (gitignored)."""
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    CREDS_FILE.write_text(
-        json.dumps({"username": username, "password": password}, indent=2),
-        encoding="utf-8",
-    )
-    _log(f"Credentials saved → {CREDS_FILE}")
+    """Persist credentials to the OS keyring (Windows Credential Manager on Windows)."""
+    try:
+        import keyring
+        keyring.set_password(_KEYRING_SERVICE, "username", username)
+        keyring.set_password(_KEYRING_SERVICE, "password", password)
+        _log(f"Credentials for '{username}' saved to keyring.")
+        if CREDS_FILE.exists():
+            CREDS_FILE.unlink(missing_ok=True)
+            _log("Removed legacy creds.json.")
+    except ImportError:
+        _log("keyring not installed — cannot save credentials.")
+    except Exception as exc:
+        _log(f"keyring write failed: {exc}")
 
 
 def _do_login(page, creds: dict) -> bool:

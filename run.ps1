@@ -59,12 +59,12 @@ if (-not $SkipChecks) {
 
     # 2. Core packages
     Write-Step "  Core packages .........."
-    $coreOk = & python -c "import pydantic, pandas, yfinance, rich, loguru; print('ok')" 2>&1
+    $coreOk = & python -c "import pydantic, pandas, yfinance, rich, loguru, keyring; print('ok')" 2>&1
     if ($coreOk -ne "ok") {
         Write-Auto "fidelity-rebalancer"
         & python -m pip install -e $FRDir --quiet 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Fail "pip install failed.  Run manually: pip install -e `"$FRDir`"" }
-        $coreOk2 = & python -c "import pydantic, pandas, yfinance, rich, loguru; print('ok')" 2>&1
+        $coreOk2 = & python -c "import pydantic, pandas, yfinance, rich, loguru, keyring; print('ok')" 2>&1
         if ($coreOk2 -ne "ok") { Fail "Packages still missing after install.  Check pip output." }
         Write-Pass "installed OK"
     } else {
@@ -116,6 +116,65 @@ except Exception:
     & python -m py_compile $serverScript 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "server.py has a syntax error.  Run: python -m py_compile server.py" }
     Write-Pass "OK"
+
+    # 6. SectorSurfer credentials in keyring
+    Write-Step "  SectorSurfer creds ....."
+    $tmp6 = [System.IO.Path]::GetTempFileName() + ".py"
+    Set-Content $tmp6 -Encoding UTF8 -Value @'
+import sys
+try:
+    import keyring
+    u = keyring.get_password("sectorsurfer", "username")
+    p = keyring.get_password("sectorsurfer", "password")
+    print("ok" if (u and p) else "missing")
+except Exception as e:
+    print(f"error:{e}")
+'@
+    $credsStatus = & python $tmp6 2>&1
+    Remove-Item $tmp6 -ErrorAction SilentlyContinue
+
+    if ($credsStatus -eq "ok") {
+        Write-Pass "OK"
+    } else {
+        Write-Host ""
+        if ($credsStatus -like "error:*") {
+            Write-Host "  WARNING: keyring check failed: $credsStatus" -ForegroundColor Yellow
+        } else {
+            Write-Host "  SectorSurfer credentials not found in Windows Credential Manager." -ForegroundColor Yellow
+            Write-Host "  Enter them now, or press Enter to skip" -ForegroundColor DarkGray
+            Write-Host "  (the scraper will prompt for manual browser login on first run)." -ForegroundColor DarkGray
+            Write-Host ""
+            $ssUser = Read-Host "    Username (email)"
+            if ($ssUser) {
+                $secPass = Read-Host "    Password" -AsSecureString
+                $bstr    = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPass)
+                $ssPass  = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+
+                $env:_SS_USER = $ssUser
+                $env:_SS_PASS = $ssPass
+                $tmp6b = [System.IO.Path]::GetTempFileName() + ".py"
+                Set-Content $tmp6b -Encoding UTF8 -Value @'
+import keyring, os
+keyring.set_password("sectorsurfer", "username", os.environ.pop("_SS_USER", ""))
+keyring.set_password("sectorsurfer", "password", os.environ.pop("_SS_PASS", ""))
+print("stored")
+'@
+                $storeResult = & python $tmp6b 2>&1
+                Remove-Item $tmp6b -ErrorAction SilentlyContinue
+                Remove-Item Env:\_SS_USER, Env:\_SS_PASS -ErrorAction SilentlyContinue
+
+                if ($storeResult -eq "stored") {
+                    Write-Pass "saved to Windows Credential Manager"
+                } else {
+                    Write-Host "  WARNING: Failed to save credentials: $storeResult" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "  Skipped — scraper will prompt for browser login on first run." -ForegroundColor DarkGray
+            }
+        }
+        Write-Host ""
+    }
 
     Write-Host ""
     Write-Host "  All checks passed." -ForegroundColor Green

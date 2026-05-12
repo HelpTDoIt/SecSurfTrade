@@ -83,31 +83,29 @@ If any step cannot be completed automatically, it prints a plain-English error a
 
 ### First SectorSurfer login
 
-The scraper uses its own Playwright-managed Chromium browser with a persistent profile stored in `.browser_profile/`. On the **first run**, a Chromium window opens showing the SectorSurfer login form. Log in there — the scraper waits up to 2 minutes.
+The scraper uses its own Playwright-managed Chromium browser with a persistent profile stored in `.browser_profile/`. Credentials are stored in **Windows Credential Manager** (encrypted with your Windows login via DPAPI) — never in a plaintext file.
+
+**First-time setup:** `run.ps1` checks for stored credentials on startup. If none are found, it prompts for your SectorSurfer username and password and saves them to Windows Credential Manager automatically. Alternatively, run the scraper directly — it will open a browser window, wait for you to log in, then offer to save credentials.
 
 ```powershell
 python scripts/sectorsurfer_signals.py --out signals.json
 ```
 
 After you log in:
-- The browser session (cookies) is saved automatically to `.browser_profile/` — you stay logged in across runs until SectorSurfer's session expires.
-- The terminal prompts: **"Save credentials for auto-login next time?"** — enter your username and password. They are saved to `.browser_profile/creds.json` (gitignored).
-
-On subsequent runs, the scraper either:
-- Loads the page and goes straight to extraction (if the browser session is still valid), or
-- Auto-fills and submits the login form using stored credentials (if the session has expired).
+- The browser session (cookies) is saved to `.browser_profile/` — you stay logged in across runs until SectorSurfer's session expires.
+- If your session is expired, the scraper auto-fills and submits the login form using credentials from Windows Credential Manager.
 
 The Chromium browser window is always visible — you can watch what the scraper is doing.
 
 ### Reset credentials
 
-To re-enter credentials (e.g. password changed):
+To clear stored credentials (e.g. password changed):
 
 ```powershell
-Remove-Item C:\Users\Jason\Documents\Code\SecSurfTrade\.browser_profile\creds.json
+python -c "import keyring; keyring.delete_password('sectorsurfer', 'username'); keyring.delete_password('sectorsurfer', 'password')"
 ```
 
-The next run will prompt for manual browser login and offer to save new credentials.
+Then re-run `.\run.ps1` — it will prompt for new credentials, or run the scraper and log in manually when the browser opens.
 
 ### Verify the Python engine (optional)
 
