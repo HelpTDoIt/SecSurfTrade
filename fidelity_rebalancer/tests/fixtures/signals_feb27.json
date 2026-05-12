@@ -1,0 +1,17 @@
+{
+  "signals": {
+    "World Try -Top":     { "current": "EIS",  "new": "EIS"  },
+    "SPDR Respectable":   { "current": "SMH",  "new": "SMH"  },
+    "Prismatic Prudence": { "current": "EEM",  "new": "EWY"  },
+    "Future Theme + CAPE":{ "current": "AOR",  "new": "AOR"  },
+    "Leverage":           { "current": "PILL", "new": "PILL" }
+  },
+  "closes": {
+    "EIS":  28.50,
+    "SMH":  200.0,
+    "EEM":  62.71,
+    "AOR":  45.0,
+    "EWY":  55.0,
+    "PILL": 30.0
+  }
+}

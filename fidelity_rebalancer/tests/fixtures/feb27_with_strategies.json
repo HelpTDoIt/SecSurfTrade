@@ -1,0 +1,222 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-02-27T14:00:00Z",
+  "generator": "engine",
+  "inputs": {
+    "accounts": [
+      {
+        "name": "Roth IRA",
+        "type": "retirement",
+        "cash_reserve": 0.0,
+        "positions": [
+          {
+            "symbol": "EEM",
+            "quantity": 200.0,
+            "price": 62.71,
+            "value": 12542.0,
+            "lot_type": "Cash"
+          },
+          {
+            "symbol": "SPAXX**",
+            "quantity": 100.0,
+            "price": 1.0,
+            "value": 100.0,
+            "lot_type": "Cash"
+          }
+        ],
+        "cash_spaxx": 100.0,
+        "strategy_allocations": {
+          "Prismatic Prudence": 0.2,
+          "SPDR Respectable": 0.3
+        }
+      }
+    ],
+    "signals": [
+      {
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "current_ticker": "EEM",
+        "new_ticker": "EWY"
+      },
+      {
+        "account": "Roth IRA",
+        "strategy": "SPDR Respectable",
+        "current_ticker": "SMH",
+        "new_ticker": "SMH"
+      }
+    ],
+    "prev_closes": {
+      "EEM": 62.71,
+      "EWY": 75.5,
+      "SMH": 200.0
+    },
+    "config": {
+      "ex_div_check": true,
+      "polling_seconds": 45,
+      "stall_threshold_seconds": 300,
+      "chunker": {
+        "max_pct_of_top3_depth": 0.25,
+        "max_pct_of_5min_volume": 0.15
+      }
+    }
+  },
+  "computed": {
+    "cash_ok": {
+      "Roth IRA": true
+    },
+    "one_share_total": {
+      "Roth IRA": 338.0
+    },
+    "sells": [
+      {
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EEM",
+        "shares": 200.0,
+        "limit_price": 62.39,
+        "limit_price_basis": "prev_close",
+        "est_proceeds": 12478.0
+      }
+    ],
+    "buy_allocations": [
+      {
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EWY",
+        "dollar_target": 12000.0,
+        "limit_price": 75.5,
+        "share_target": 158,
+        "est_cost": 11929.0,
+        "is_rebalance": false,
+        "target_value": 12000.0
+      },
+      {
+        "account": "Roth IRA",
+        "strategy": "SPDR Respectable",
+        "ticker": "SMH",
+        "dollar_target": 5000.0,
+        "limit_price": 200.1,
+        "share_target": 24,
+        "est_cost": 4802.4,
+        "is_rebalance": true,
+        "target_value": 5000.0
+      }
+    ],
+    "sell_chunks": [
+      {
+        "chunk_id": "s_Roth_IRA_EEM_0",
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EEM",
+        "idx": 0,
+        "shares": 100.0,
+        "limit_price": 62.39,
+        "cost": 6239.0
+      },
+      {
+        "chunk_id": "s_Roth_IRA_EEM_1",
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EEM",
+        "idx": 1,
+        "shares": 100.0,
+        "limit_price": 62.39,
+        "cost": 6239.0
+      }
+    ],
+    "buy_chunks": [
+      {
+        "chunk_id": "b_Roth_IRA_EWY_0",
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EWY",
+        "idx": 0,
+        "shares": 100.0,
+        "limit_price": 75.5,
+        "cost": 7550.0
+      },
+      {
+        "chunk_id": "b_Roth_IRA_EWY_1",
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EWY",
+        "idx": 1,
+        "shares": 58.0,
+        "limit_price": 75.5,
+        "cost": 4379.0
+      },
+      {
+        "chunk_id": "b_Roth_IRA_SMH_0",
+        "account": "Roth IRA",
+        "strategy": "SPDR Respectable",
+        "ticker": "SMH",
+        "idx": 0,
+        "shares": 24.0,
+        "limit_price": 200.1,
+        "cost": 4802.4
+      }
+    ],
+    "sell_strategies": [
+      {
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EEM",
+        "order_type": "LIMIT",
+        "limit_price": 62.39,
+        "urgency": "normal",
+        "rule": "tight_spread_small_position",
+        "reasoning": [
+          "Spread is 3.2 bps.",
+          "Order is 0.20% of 30-day ADV (200 sh).",
+          "Session volume is 1.20× ADV.",
+          "LIMIT at midpoint $62.3900."
+        ],
+        "chunk_ids": [
+          "s_Roth_IRA_EEM_0",
+          "s_Roth_IRA_EEM_1"
+        ]
+      }
+    ],
+    "buy_strategies": [
+      {
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EWY",
+        "order_type": "LIMIT",
+        "limit_price": 75.5,
+        "urgency": "normal",
+        "rule": "tight_spread_good_volume",
+        "reasoning": [
+          "Spread is 2.6 bps.",
+          "Session volume is 1.50× ADV.",
+          "Order is 0.16% of 30-day ADV (158 sh).",
+          "LIMIT at ask $75.5000 — likely to fill quickly."
+        ],
+        "chunk_ids": [
+          "b_Roth_IRA_EWY_0",
+          "b_Roth_IRA_EWY_1"
+        ]
+      },
+      {
+        "account": "Roth IRA",
+        "strategy": "SPDR Respectable",
+        "ticker": "SMH",
+        "order_type": "LIMIT",
+        "limit_price": 200.1,
+        "urgency": "patient",
+        "rule": "wide_spread",
+        "reasoning": [
+          "Spread is 12.0 bps.",
+          "Wide spread — split the difference.",
+          "LIMIT at midpoint $200.1000.",
+          "Order is 0.24% of 30-day ADV (24 sh)."
+        ],
+        "chunk_ids": [
+          "b_Roth_IRA_SMH_0"
+        ]
+      }
+    ],
+    "drift": {}
+  },
+  "execution_state": null
+}

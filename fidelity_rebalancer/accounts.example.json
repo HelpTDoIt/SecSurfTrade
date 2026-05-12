@@ -1,0 +1,32 @@
+{
+  "Account Name 1": {
+    "type": "retirement",
+    "strategies": {
+      "Strategy A": 0.25,
+      "Strategy B": 0.30,
+      "Strategy C": 0.20,
+      "Strategy D": 0.25
+    },
+    "cashReserve": 0
+  },
+  "Account Name 2": {
+    "type": "retirement",
+    "strategies": {
+      "Strategy A": 0.25,
+      "Strategy B": 0.30,
+      "Strategy C": 0.20,
+      "Strategy D": 0.25
+    },
+    "cashReserve": 0
+  },
+  "Account Name 3": {
+    "type": "taxable",
+    "strategies": {
+      "Strategy A": 0.14,
+      "Strategy E": 0.36,
+      "Strategy B": 0.36,
+      "Strategy D": 0.14
+    },
+    "cashReserve": 1500
+  }
+}

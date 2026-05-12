@@ -1,0 +1,26 @@
+# Browser session — contains login cookies, never commit
+.browser_profile/
+
+# Scraper debug output
+debug/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Data files — contain account positions, never commit
+fidelity_rebalancer/csvs/
+fidelity_rebalancer/plans/
+fidelity_rebalancer/logs/
+signals.json
+*.json
+!fidelity_rebalancer/tests/fixtures/*.json
+!fidelity_rebalancer/accounts.example.json
+
+# OS
+.DS_Store
+Thumbs.db

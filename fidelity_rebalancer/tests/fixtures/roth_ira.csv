@@ -1,0 +1,7 @@
+"Roth IRA"
+Account Name,Account Number,Symbol,Description,Quantity,Last Price,Last Price Change,Current Value,Today's Gain/Loss Dollar,Today's Gain/Loss Percent,Total Gain/Loss Dollar,Total Gain/Loss Percent,Percent Of Account,Cost Basis Total,Average Cost Basis,Type
+Roth IRA,Z11111111,EIS,iShares MSCI Israel ETF,500.000,$28.50,+$0.10,$14250.00,+$50.00,+0.35%,$2000.00,+16.33%,21.45%,$12250.00,$24.50,Cash
+Roth IRA,Z11111111,SMH,SPDR S&P Semiconductor ETF,50.000,$200.00,+$1.50,$10000.00,+$75.00,+0.75%,$1500.00,+17.65%,15.05%,$8500.00,$170.00,Cash
+Roth IRA,Z11111111,EEM,iShares MSCI Emerging Markets ETF,200.000,$62.71,+$0.21,$12542.00,+$42.00,+0.34%,$1542.00,+14.00%,18.88%,$11000.00,$55.00,Cash
+Roth IRA,Z11111111,AOR,iShares Core Growth Allocation ETF,600.000,$45.00,+$0.05,$27000.00,+$30.00,+0.11%,$3000.00,+12.50%,40.64%,$24000.00,$40.00,Cash
+Roth IRA,Z11111111,SPAXX**,Fidelity Government Money Market,100.000,$1.00,$0.00,$100.00,$0.00,0.00%,$0.00,0.00%,0.15%,$100.00,$1.00,Cash

@@ -1,0 +1,195 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-02-27T09:00:00-05:00",
+  "generator": "react_calc",
+  "inputs": {
+    "accounts": [
+      {
+        "name": "Roth IRA",
+        "type": "retirement",
+        "cash_reserve": 0.0,
+        "positions": [
+          {"symbol": "EIS",    "quantity": 500.0, "price": 28.50,  "value": 14250.0, "lot_type": "Cash"},
+          {"symbol": "SMH",    "quantity":  50.0, "price": 200.0,  "value": 10000.0, "lot_type": "Cash"},
+          {"symbol": "EEM",    "quantity": 200.0, "price":  62.71, "value": 12542.0, "lot_type": "Cash"},
+          {"symbol": "AOR",    "quantity": 600.0, "price":  45.0,  "value": 27000.0, "lot_type": "Cash"},
+          {"symbol": "SPAXX**","quantity": 100.0, "price":   1.0,  "value":   100.0, "lot_type": "Cash"}
+        ],
+        "cash_spaxx": 100.0,
+        "strategy_allocations": {
+          "World Try -Top":     0.25,
+          "SPDR Respectable":   0.30,
+          "Prismatic Prudence": 0.20,
+          "Future Theme + CAPE":0.25
+        }
+      },
+      {
+        "name": "Rollover IRA",
+        "type": "retirement",
+        "cash_reserve": 0.0,
+        "positions": [
+          {"symbol": "EIS",    "quantity": 400.0, "price": 28.50, "value": 11400.0,  "lot_type": "Cash"},
+          {"symbol": "SMH",    "quantity":  30.0, "price": 200.0, "value":  6000.0,  "lot_type": "Cash"},
+          {"symbol": "EEM",    "quantity": 150.0, "price":  62.71,"value":  9406.5,  "lot_type": "Cash"},
+          {"symbol": "AOR",    "quantity": 400.0, "price":  45.0, "value": 18000.0,  "lot_type": "Cash"},
+          {"symbol": "SPAXX**","quantity":  50.0, "price":   1.0, "value":    50.0,  "lot_type": "Cash"}
+        ],
+        "cash_spaxx": 50.0,
+        "strategy_allocations": {
+          "World Try -Top":     0.25,
+          "SPDR Respectable":   0.30,
+          "Prismatic Prudence": 0.20,
+          "Future Theme + CAPE":0.25
+        }
+      },
+      {
+        "name": "Individual - TOD",
+        "type": "taxable",
+        "cash_reserve": 1500.0,
+        "positions": [
+          {"symbol": "EIS",    "quantity": 200.0, "price": 28.50, "value":  5700.0, "lot_type": "Cash"},
+          {"symbol": "SMH",    "quantity":  50.0, "price": 200.0, "value": 10000.0, "lot_type": "Cash"},
+          {"symbol": "PILL",   "quantity": 100.0, "price":  30.0, "value":  3000.0, "lot_type": "Cash"},
+          {"symbol": "AOR",    "quantity": 200.0, "price":  45.0, "value":  9000.0, "lot_type": "Cash"},
+          {"symbol": "SPAXX**","quantity":1600.0, "price":   1.0, "value":  1600.0, "lot_type": "Cash"}
+        ],
+        "cash_spaxx": 1600.0,
+        "strategy_allocations": {
+          "World Try -Top":     0.14,
+          "Leverage":           0.36,
+          "SPDR Respectable":   0.36,
+          "Future Theme + CAPE":0.14
+        }
+      }
+    ],
+    "signals": [
+      {"account": "Roth IRA",       "strategy": "World Try -Top",     "current_ticker": "EIS",  "new_ticker": "EIS" },
+      {"account": "Roth IRA",       "strategy": "SPDR Respectable",   "current_ticker": "SMH",  "new_ticker": "SMH" },
+      {"account": "Roth IRA",       "strategy": "Prismatic Prudence", "current_ticker": "EEM",  "new_ticker": "EWY" },
+      {"account": "Roth IRA",       "strategy": "Future Theme + CAPE","current_ticker": "AOR",  "new_ticker": "AOR" },
+      {"account": "Rollover IRA",   "strategy": "World Try -Top",     "current_ticker": "EIS",  "new_ticker": "EIS" },
+      {"account": "Rollover IRA",   "strategy": "SPDR Respectable",   "current_ticker": "SMH",  "new_ticker": "SMH" },
+      {"account": "Rollover IRA",   "strategy": "Prismatic Prudence", "current_ticker": "EEM",  "new_ticker": "EWY" },
+      {"account": "Rollover IRA",   "strategy": "Future Theme + CAPE","current_ticker": "AOR",  "new_ticker": "AOR" },
+      {"account": "Individual - TOD","strategy": "World Try -Top",    "current_ticker": "EIS",  "new_ticker": "EIS" },
+      {"account": "Individual - TOD","strategy": "Leverage",          "current_ticker": "PILL", "new_ticker": "PILL"},
+      {"account": "Individual - TOD","strategy": "SPDR Respectable",  "current_ticker": "SMH",  "new_ticker": "SMH" },
+      {"account": "Individual - TOD","strategy": "Future Theme + CAPE","current_ticker": "AOR", "new_ticker": "AOR" }
+    ],
+    "prev_closes": {
+      "EIS":  28.50,
+      "SMH":  200.0,
+      "EEM":  62.71,
+      "AOR":  45.0,
+      "EWY":  55.0,
+      "PILL": 30.0
+    },
+    "config": {
+      "ex_div_check": true,
+      "polling_seconds": 45,
+      "stall_threshold_seconds": 300,
+      "chunker": {"max_pct_of_top3_depth": 0.25, "max_pct_of_5min_volume": 0.15}
+    }
+  },
+  "computed": {
+    "cash_ok": {
+      "Roth IRA":       false,
+      "Rollover IRA":   false,
+      "Individual - TOD": false
+    },
+    "one_share_total": {
+      "Roth IRA":       328.5,
+      "Rollover IRA":   328.5,
+      "Individual - TOD": 303.5
+    },
+    "sells": [
+      {
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EEM",
+        "shares": 200.0,
+        "limit_price": 62.71,
+        "limit_price_basis": "prev_close",
+        "est_proceeds": 12542.0
+      },
+      {
+        "account": "Rollover IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EEM",
+        "shares": 150.0,
+        "limit_price": 62.71,
+        "limit_price_basis": "prev_close",
+        "est_proceeds": 9406.5
+      }
+    ],
+    "buy_allocations": [
+      {
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EWY",
+        "dollar_target": 12642.0,
+        "limit_price": 55.0,
+        "share_target": 229,
+        "est_cost": 12595.0,
+        "is_rebalance": false,
+        "target_value": 12778.4
+      },
+      {
+        "account": "Rollover IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EWY",
+        "dollar_target": 9456.5,
+        "limit_price": 55.0,
+        "share_target": 171,
+        "est_cost": 9405.0,
+        "is_rebalance": false,
+        "target_value": 8971.3
+      }
+    ],
+    "sell_chunks": [
+      {
+        "chunk_id": "s1",
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EEM",
+        "idx": 0,
+        "shares": 200.0,
+        "limit_price": 62.71,
+        "cost": 12542.0
+      },
+      {
+        "chunk_id": "s2",
+        "account": "Rollover IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EEM",
+        "idx": 0,
+        "shares": 150.0,
+        "limit_price": 62.71,
+        "cost": 9406.5
+      }
+    ],
+    "buy_chunks": [
+      {
+        "chunk_id": "b1",
+        "account": "Roth IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EWY",
+        "idx": 0,
+        "shares": 229,
+        "limit_price": 55.0,
+        "cost": 12595.0
+      },
+      {
+        "chunk_id": "b2",
+        "account": "Rollover IRA",
+        "strategy": "Prismatic Prudence",
+        "ticker": "EWY",
+        "idx": 0,
+        "shares": 171,
+        "limit_price": 55.0,
+        "cost": 9405.0
+      }
+    ],
+    "drift": {}
+  }
+}
