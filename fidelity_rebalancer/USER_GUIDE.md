@@ -105,7 +105,7 @@ To clear stored credentials (e.g. password changed):
 python -c "import keyring; keyring.delete_password('sectorsurfer', 'username'); keyring.delete_password('sectorsurfer', 'password')"
 ```
 
-Then re-run `.\run.ps1` — it will prompt for new credentials, or run the scraper and log in manually when the browser opens.
+Then run the scraper — it will open a browser window and wait for you to log in manually, then offer to save the new credentials at the terminal prompt.
 
 ### Verify the Python engine (optional)
 
@@ -465,7 +465,7 @@ The Playwright Chromium window opens on every scraper run and closes when done. 
 | Scraper: auto-login fails every run | Password changed, or stored credentials are wrong | Delete keyring entries (`python -c "import keyring; keyring.delete_password('sectorsurfer','username'); keyring.delete_password('sectorsurfer','password')"`), run scraper, log in manually, save new credentials when prompted |
 | Scraper: session expired on every run | `.browser_profile/` deleted or corrupted | Delete `.browser_profile/` entirely and run the scraper — log in manually and save credentials again |
 | Scraper: `[ACTION REQUIRED]` prompt appears | Browser session expired and no stored credentials | Log in at the Chromium browser window; optionally save credentials at the terminal prompt |
-| Scraper: SELL: wait times out, returns 0 signals | Login panel still showing (not actually logged in) | Check if the Chromium window shows the login form; log in manually. If it happens consistently, delete `.browser_profile/creds.json` |
+| Scraper: SELL: wait times out, returns 0 signals | Login panel still showing (not actually logged in) | Check if the Chromium window shows the login form; log in manually. If it happens consistently, clear keyring entries and re-save: `python -c "import keyring; keyring.delete_password('sectorsurfer','username'); keyring.delete_password('sectorsurfer','password')"` |
 | Scraper: SELL: wait times out, returns `... loading ...` | AJAX data didn't load in 20s | Run with `--debug` to capture a screenshot; may be a slow connection or site outage |
 | Yahoo Finance fetch returns nothing | Yahoo unreachable or market closed | Use Import State (closes are in `signals.json`) or enter prices manually |
 | Yahoo Finance fetch: "Fetch failed: Server error" | `run.ps1` server not running | Restart `.\run.ps1`; the proxy server must be running for the fetch to work |

@@ -193,6 +193,7 @@ The full Pydantic models are in chunk 2 (`02_state_schema_and_compare.md`). High
 | rich | 13.7+ | text formatting |
 | loguru | 0.7+ | structured logging to journal.jsonl |
 | yfinance | 0.2.36+ | quote fallback for off-hours dev/testing only |
+| keyring | 24+ | OS credential storage (Windows Credential Manager) |
 | pytest | latest | test runner |
 
 **Language**: Python 3.12+ throughout. No build step for the React calculator (continues to use CDN-hosted React/ReactDOM/Babel as today).
@@ -287,6 +288,7 @@ This repo is designed to be safe to make public. Key controls:
 | Concern | Control |
 |---|---|
 | Real account names | Stored in `accounts.json` (gitignored). Committed template is `accounts.example.json` with placeholder names. |
+| SectorSurfer credentials | Stored in the OS keyring (Windows Credential Manager via DPAPI). Never written to disk in plaintext. `run.ps1` checks for stored credentials on startup and prints instructions to run the scraper once if none are found — credential entry happens entirely in Python via `getpass`. |
 | Per-trade detail (tickers, limit prices) | `cli.strategy` routes these to `logging.DEBUG`, suppressed by default. Use `--verbose` / `-v` to show on stderr. |
 | Audit journal | `logs/journal.jsonl` is created with `mode=0o600` (owner-read/write only). The `logs/` directory is gitignored. |
 | API key | `ANTHROPIC_API_KEY` read from env var only — never in source. |
