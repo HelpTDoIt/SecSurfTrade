@@ -140,38 +140,11 @@ except Exception as e:
         if ($credsStatus -like "error:*") {
             Write-Host "  WARNING: keyring check failed: $credsStatus" -ForegroundColor Yellow
         } else {
-            Write-Host "  SectorSurfer credentials not found in Windows Credential Manager." -ForegroundColor Yellow
-            Write-Host "  Enter them now, or press Enter to skip" -ForegroundColor DarkGray
-            Write-Host "  (the scraper will prompt for manual browser login on first run)." -ForegroundColor DarkGray
-            Write-Host ""
-            $ssUser = Read-Host "    Username (email)"
-            if ($ssUser) {
-                $secPass = Read-Host "    Password" -AsSecureString
-                $bstr    = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPass)
-                $ssPass  = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-
-                $env:_SS_USER = $ssUser
-                $env:_SS_PASS = $ssPass
-                $tmp6b = [System.IO.Path]::GetTempFileName() + ".py"
-                Set-Content $tmp6b -Encoding UTF8 -Value @'
-import keyring, os
-keyring.set_password("sectorsurfer", "username", os.environ.pop("_SS_USER", ""))
-keyring.set_password("sectorsurfer", "password", os.environ.pop("_SS_PASS", ""))
-print("stored")
-'@
-                $storeResult = & python $tmp6b 2>&1
-                Remove-Item $tmp6b -ErrorAction SilentlyContinue
-                Remove-Item Env:\_SS_USER, Env:\_SS_PASS -ErrorAction SilentlyContinue
-
-                if ($storeResult -eq "stored") {
-                    Write-Pass "saved to Windows Credential Manager"
-                } else {
-                    Write-Host "  WARNING: Failed to save credentials: $storeResult" -ForegroundColor Yellow
-                }
-            } else {
-                Write-Host "  Skipped — scraper will prompt for browser login on first run." -ForegroundColor DarkGray
-            }
+            Write-Host "  SectorSurfer credentials not found." -ForegroundColor Yellow
+            Write-Host "  Run the scraper once to set them up:" -ForegroundColor DarkGray
+            Write-Host "    python scripts\sectorsurfer_signals.py" -ForegroundColor DarkGray
+            Write-Host "  Log in manually in the browser — you will be prompted" -ForegroundColor DarkGray
+            Write-Host "  in the terminal to save credentials securely." -ForegroundColor DarkGray
         }
         Write-Host ""
     }

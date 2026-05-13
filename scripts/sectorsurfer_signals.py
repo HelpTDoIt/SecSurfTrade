@@ -10,8 +10,8 @@ Usage:
 
 First run: a browser window opens. Log in manually in the browser — the script
 waits. After login, it offers to save your credentials in the terminal so future
-runs auto-login.  Credentials are stored in .browser_profile/creds.json
-(gitignored).
+runs auto-login.  Credentials are stored in the OS keyring (Windows Credential
+Manager on Windows).
 """
 from __future__ import annotations
 
@@ -413,7 +413,7 @@ def _scrape(*, debug: bool) -> list[dict]:
         # Playwright bundled Chromium with a persistent profile.
         # Sessions (cookies) are saved in .browser_profile/ — login is only
         # needed once, or when SectorSurfer's session expires.
-        # Credentials are stored in .browser_profile/creds.json for auto-login.
+        # Credentials are stored in the OS keyring for auto-login.
         _log(f"Launching Chromium with persistent profile: {PROFILE_DIR}")
         ctx = pw.chromium.launch_persistent_context(
             str(PROFILE_DIR),

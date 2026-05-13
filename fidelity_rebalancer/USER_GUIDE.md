@@ -85,7 +85,7 @@ If any step cannot be completed automatically, it prints a plain-English error a
 
 The scraper uses its own Playwright-managed Chromium browser with a persistent profile stored in `.browser_profile/`. Credentials are stored in **Windows Credential Manager** (encrypted with your Windows login via DPAPI) — never in a plaintext file.
 
-**First-time setup:** `run.ps1` checks for stored credentials on startup. If none are found, it prompts for your SectorSurfer username and password and saves them to Windows Credential Manager automatically. Alternatively, run the scraper directly — it will open a browser window, wait for you to log in, then offer to save credentials.
+**First-time setup:** `run.ps1` checks for stored credentials on startup. If none are found, it prints instructions to run the scraper once — log in manually in the browser window that opens, then enter credentials at the terminal prompt. The scraper's Python-side prompt uses `getpass` to collect the password securely and stores it directly to Windows Credential Manager without ever materialising it in the shell environment.
 
 ```powershell
 python scripts/sectorsurfer_signals.py --out signals.json
@@ -462,7 +462,7 @@ The Playwright Chromium window opens on every scraper run and closes when done. 
 | `no recognized accounts found in CSV directory` | Account name mismatch | Check CSV header; matching is case-insensitive. New/unrecognized account names print a warning — add them to `accounts.json` |
 | `--inputs not provided and no Fidelity CSVs found in ~/Downloads` | CSVs not downloaded yet, or not in Downloads | Download position CSVs from Fidelity.com or pass `--inputs <dir>` explicitly |
 | Scraper: `Unrecognized portal strategies` | SectorSurfer renamed a strategy (and it has a SELL/BUY ticker) | Update `STRATEGY_MAP` in `scripts/sectorsurfer_signals.py` |
-| Scraper: auto-login fails every run | Password changed, or stored credentials are wrong | Delete `.browser_profile/creds.json`, run scraper, log in manually, save new credentials when prompted |
+| Scraper: auto-login fails every run | Password changed, or stored credentials are wrong | Delete keyring entries (`python -c "import keyring; keyring.delete_password('sectorsurfer','username'); keyring.delete_password('sectorsurfer','password')"`), run scraper, log in manually, save new credentials when prompted |
 | Scraper: session expired on every run | `.browser_profile/` deleted or corrupted | Delete `.browser_profile/` entirely and run the scraper — log in manually and save credentials again |
 | Scraper: `[ACTION REQUIRED]` prompt appears | Browser session expired and no stored credentials | Log in at the Chromium browser window; optionally save credentials at the terminal prompt |
 | Scraper: SELL: wait times out, returns 0 signals | Login panel still showing (not actually logged in) | Check if the Chromium window shows the login form; log in manually. If it happens consistently, delete `.browser_profile/creds.json` |
