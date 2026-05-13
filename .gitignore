@@ -1,8 +1,12 @@
 # Browser session — contains login cookies, never commit
 .browser_profile/
 
-# Scraper debug output
+# Scraper / OCR debug output
 debug/
+debug_*.png
+*_tree.txt
+temp
+temp.txt
 
 # Python
 __pycache__/
