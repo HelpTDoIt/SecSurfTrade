@@ -1,5 +1,5 @@
 {
-  "Roth IRA": {
+  "Test Retirement": {
     "cash_ok": false,
     "one_share_total": 328.5,
     "total_pool": 63892.0,
@@ -7,7 +7,7 @@
     "est_sell": 12542.0,
     "sells": [
       {
-        "strategy": "Prismatic Prudence",
+        "strategy": "Strategy Alpha",
         "ticker": "EEM",
         "quantity": 200.0,
         "limit_price": 62.71,
@@ -16,7 +16,7 @@
     ],
     "buy_allocations": [
       {
-        "strategy": "Prismatic Prudence",
+        "strategy": "Strategy Alpha",
         "ticker": "EWY",
         "dollar_target": 12642.0,
         "limit_price": 55.0,
@@ -27,10 +27,10 @@
       }
     ],
     "sell_chunks": [
-      [{"idx": 0, "shares": 200.0, "limit_price": 62.71, "cost": 12542.0}]
+      [{ "idx": 0, "shares": 200.0, "limit_price": 62.71, "cost": 12542.0 }]
     ],
     "buy_chunks": [
-      [{"idx": 0, "shares": 229, "limit_price": 55.0, "cost": 12595.0}]
+      [{ "idx": 0, "shares": 229, "limit_price": 55.0, "cost": 12595.0 }]
     ]
   }
 }

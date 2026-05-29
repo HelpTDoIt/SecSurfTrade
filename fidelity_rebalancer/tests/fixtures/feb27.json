@@ -1,37 +1,62 @@
 {
   "accounts": {
-    "Roth IRA": {
+    "Test Retirement": {
       "config": {
         "strategies": {
-          "World Try -Top": 0.25,
-          "SPDR Respectable": 0.30,
-          "Prismatic Prudence": 0.20,
-          "Future Theme + CAPE": 0.25
+          "Strategy Gamma": 0.25,
+          "Strategy Beta": 0.3,
+          "Strategy Alpha": 0.2,
+          "Strategy Delta": 0.25
         },
         "cashReserve": 0
       },
       "positions": {
-        "EIS": {"symbol": "EIS", "quantity": 500.0, "value": 14250.0, "price": 28.50},
-        "SMH": {"symbol": "SMH", "quantity": 50.0,  "value": 10000.0, "price": 200.0},
-        "EEM": {"symbol": "EEM", "quantity": 200.0, "value": 12542.0, "price": 62.71},
-        "AOR": {"symbol": "AOR", "quantity": 600.0, "value": 27000.0, "price": 45.0},
-        "SPAXX**": {"symbol": "SPAXX**", "quantity": 100.0, "value": 100.0, "price": 1.0}
+        "EIS": {
+          "symbol": "EIS",
+          "quantity": 500.0,
+          "value": 14250.0,
+          "price": 28.5
+        },
+        "SMH": {
+          "symbol": "SMH",
+          "quantity": 50.0,
+          "value": 10000.0,
+          "price": 200.0
+        },
+        "EEM": {
+          "symbol": "EEM",
+          "quantity": 200.0,
+          "value": 12542.0,
+          "price": 62.71
+        },
+        "AOR": {
+          "symbol": "AOR",
+          "quantity": 600.0,
+          "value": 27000.0,
+          "price": 45.0
+        },
+        "SPAXX**": {
+          "symbol": "SPAXX**",
+          "quantity": 100.0,
+          "value": 100.0,
+          "price": 1.0
+        }
       }
     }
   },
   "signals": {
-    "World Try -Top":     {"current": "EIS",  "new": "EIS"},
-    "SPDR Respectable":   {"current": "SMH",  "new": "SMH"},
-    "Prismatic Prudence": {"current": "EEM",  "new": "EWY"},
-    "Future Theme + CAPE":{"current": "AOR",  "new": "AOR"},
-    "Leverage":           {"current": "PILL", "new": "PILL"}
+    "Strategy Gamma": { "current": "EIS", "new": "EIS" },
+    "Strategy Beta": { "current": "SMH", "new": "SMH" },
+    "Strategy Alpha": { "current": "EEM", "new": "EWY" },
+    "Strategy Delta": { "current": "AOR", "new": "AOR" },
+    "Strategy Epsilon": { "current": "PILL", "new": "PILL" }
   },
   "closes": {
-    "EIS":  28.50,
-    "SMH":  200.0,
-    "EEM":  62.71,
-    "AOR":  45.0,
-    "EWY":  55.0,
+    "EIS": 28.5,
+    "SMH": 200.0,
+    "EEM": 62.71,
+    "AOR": 45.0,
+    "EWY": 55.0,
     "PILL": 30.0
   }
 }

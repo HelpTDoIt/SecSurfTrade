@@ -1,8 +1,8 @@
-"Individual - TOD"
+"Test Taxable"
 Account Name,Account Number,Symbol,Description,Quantity,Last Price,Last Price Change,Current Value,Today's Gain/Loss Dollar,Today's Gain/Loss Percent,Total Gain/Loss Dollar,Total Gain/Loss Percent,Percent Of Account,Cost Basis Total,Average Cost Basis,Type
-Individual - TOD,Z33333333,EIS,iShares MSCI Israel ETF,200.000,$28.50,+$0.10,$5700.00,+$20.00,+0.35%,$700.00,+14.00%,19.45%,$5000.00,$25.00,Cash
-Individual - TOD,Z33333333,SMH,SPDR S&P Semiconductor ETF,30.000,$200.00,+$1.50,$6000.00,+$45.00,+0.75%,$900.00,+17.65%,20.48%,$5100.00,$170.00,Cash
-Individual - TOD,Z33333333,SMH,SPDR S&P Semiconductor ETF,20.000,$200.00,+$1.50,$4000.00,+$30.00,+0.75%,$600.00,+17.65%,13.65%,$3400.00,$170.00,Margin
-Individual - TOD,Z33333333,PILL,ProShares Ultra Nasdaq Biotechnology,100.000,$30.00,+$0.50,$3000.00,+$50.00,+1.69%,$500.00,+20.00%,10.24%,$2500.00,$25.00,Cash
-Individual - TOD,Z33333333,AOR,iShares Core Growth Allocation ETF,200.000,$45.00,+$0.05,$9000.00,+$10.00,+0.11%,$1000.00,+12.50%,30.71%,$8000.00,$40.00,Cash
-Individual - TOD,Z33333333,SPAXX**,Fidelity Government Money Market,1600.000,$1.00,$0.00,$1600.00,$0.00,0.00%,$0.00,0.00%,5.46%,$1600.00,$1.00,Cash
+Test Taxable,Z33333333,EIS,iShares MSCI Israel ETF,200.000,$28.50,+$0.10,$5700.00,+$20.00,+0.35%,$700.00,+14.00%,19.45%,$5000.00,$25.00,Cash
+Test Taxable,Z33333333,SMH,SPDR S&P Semiconductor ETF,30.000,$200.00,+$1.50,$6000.00,+$45.00,+0.75%,$900.00,+17.65%,20.48%,$5100.00,$170.00,Cash
+Test Taxable,Z33333333,SMH,SPDR S&P Semiconductor ETF,20.000,$200.00,+$1.50,$4000.00,+$30.00,+0.75%,$600.00,+17.65%,13.65%,$3400.00,$170.00,Margin
+Test Taxable,Z33333333,PILL,ProShares Ultra Nasdaq Biotechnology,100.000,$30.00,+$0.50,$3000.00,+$50.00,+1.69%,$500.00,+20.00%,10.24%,$2500.00,$25.00,Cash
+Test Taxable,Z33333333,AOR,iShares Core Growth Allocation ETF,200.000,$45.00,+$0.05,$9000.00,+$10.00,+0.11%,$1000.00,+12.50%,30.71%,$8000.00,$40.00,Cash
+Test Taxable,Z33333333,SPAXX**,Fidelity Government Money Market,1600.000,$1.00,$0.00,$1600.00,$0.00,0.00%,$0.00,0.00%,5.46%,$1600.00,$1.00,Cash

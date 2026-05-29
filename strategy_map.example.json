@@ -1,0 +1,9 @@
+{
+  "_comment": "Map SectorSurfer portal names to engine strategy names. Copy to strategy_map.json (gitignored) and fill in your own names.",
+  "_comment2": "Keys with a leading YE25: prefix are matched after stripping the prefix and normalizing whitespace, so they survive the annual year rollover (YE25 -> YE26) without editing.",
+  "YE25: Strategy Alpha (variant)": "Strategy Alpha",
+  "YE25: Strategy Alpha": "Strategy Alpha",
+  "Strategy Beta": "Strategy Beta",
+  "YE25: Strategy Delta": "Strategy Delta",
+  "YE25: Strategy Epsilon": "Strategy Epsilon"
+}

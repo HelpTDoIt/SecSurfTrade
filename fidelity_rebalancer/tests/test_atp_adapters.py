@@ -3,6 +3,7 @@ Tests for ATP adapters — run entirely against MockATP (no live ATP required).
 Covers: quote round-trip, L2 with 5 levels per side, all five order statuses,
 stalled partial-fill scenario, parse helpers, and Protocol conformance checks.
 """
+
 from __future__ import annotations
 
 import time
@@ -25,6 +26,7 @@ from adapters.mock_atp import MockATP
 
 
 # ── parse helper tests ─────────────────────────────────────────────────────
+
 
 class TestParsePrice:
     def test_plain_float(self):
@@ -74,14 +76,18 @@ class TestParseSize:
 
 # ── MockATP — quote round-trip ─────────────────────────────────────────────
 
+
 class TestMockATPQuote:
     def setup_method(self):
         self.mock = MockATP()
         self.mock.set_quote(
             "EEM",
-            bid=62.39, ask=62.41, last=62.40,
+            bid=62.39,
+            ask=62.41,
+            last=62.40,
             prev_close=62.71,
-            bid_size=500, ask_size=300,
+            bid_size=500,
+            ask_size=300,
             volume=1_200_000,
         )
 
@@ -95,8 +101,8 @@ class TestMockATPQuote:
 
     def test_bid_ask_last(self):
         snap = self.mock.get_quote("EEM")
-        assert snap.bid  == pytest.approx(62.39)
-        assert snap.ask  == pytest.approx(62.41)
+        assert snap.bid == pytest.approx(62.39)
+        assert snap.ask == pytest.approx(62.41)
         assert snap.last == pytest.approx(62.40)
 
     def test_prev_close(self):
@@ -137,17 +143,17 @@ class TestMockATPQuote:
 
 _SPY_BIDS = [
     (568.42, 1200, "NSDQ"),
-    (568.41,  500, "ARCA"),
+    (568.41, 500, "ARCA"),
     (568.40, 2000, "EDGX"),
-    (568.39,  800, "BATS"),
-    (568.38,  400, "MEMX"),
+    (568.39, 800, "BATS"),
+    (568.38, 400, "MEMX"),
 ]
 _SPY_ASKS = [
-    (568.45,  800, "ARCA"),
+    (568.45, 800, "ARCA"),
     (568.46, 1500, "NSDQ"),
-    (568.47,  300, "BATS"),
-    (568.48,  700, "EDGX"),
-    (568.49,  200, "IEXG"),
+    (568.47, 300, "BATS"),
+    (568.48, 700, "EDGX"),
+    (568.49, 200, "IEXG"),
 ]
 
 
@@ -185,14 +191,14 @@ class TestMockATPLevel2:
     def test_best_bid(self):
         snap = self.mock.get_level2("SPY")
         assert snap.bids[0].price == pytest.approx(568.42)
-        assert snap.bids[0].size  == 1200
-        assert snap.bids[0].mpid  == "NSDQ"
+        assert snap.bids[0].size == 1200
+        assert snap.bids[0].mpid == "NSDQ"
 
     def test_best_ask(self):
         snap = self.mock.get_level2("SPY")
         assert snap.asks[0].price == pytest.approx(568.45)
-        assert snap.asks[0].size  == 800
-        assert snap.asks[0].mpid  == "ARCA"
+        assert snap.asks[0].size == 800
+        assert snap.asks[0].mpid == "ARCA"
 
     def test_level_fields(self):
         snap = self.mock.get_level2("SPY")
@@ -207,13 +213,16 @@ class TestMockATPLevel2:
             self.mock.get_level2("UNKNOWN")
 
     def test_thin_etf_single_level(self):
-        self.mock.set_level2("JMAC", bids=[(25.10, 100, "ARCA")], asks=[(25.15, 50, "NSDQ")])
+        self.mock.set_level2(
+            "JMAC", bids=[(25.10, 100, "ARCA")], asks=[(25.15, 50, "NSDQ")]
+        )
         snap = self.mock.get_level2("JMAC")
         assert len(snap.bids) == 1
         assert len(snap.asks) == 1
 
 
 # ── MockATP — Orders panel ─────────────────────────────────────────────────
+
 
 def _make_order(
     order_id: str,
@@ -227,7 +236,7 @@ def _make_order(
     now = datetime.now(tz=timezone.utc)
     placed = now - timedelta(minutes=minutes_ago)
     return OrderRow(
-        account="Roth IRA",
+        account="Test Retirement",
         symbol=symbol,
         side=side,
         qty=qty,
@@ -261,7 +270,11 @@ class TestMockATPOrders:
         assert statuses == set(OrderStatus)
 
     def test_partial_fill_status(self):
-        self.mock.add_order(_make_order("o1", qty=200, filled_qty=100, status=OrderStatus.PartiallyFilled))
+        self.mock.add_order(
+            _make_order(
+                "o1", qty=200, filled_qty=100, status=OrderStatus.PartiallyFilled
+            )
+        )
         rows = self.mock.get_orders()
         assert rows[0].status == OrderStatus.PartiallyFilled
         assert rows[0].filled_qty == pytest.approx(100)
@@ -297,6 +310,7 @@ class TestMockATPOrders:
 
 
 # ── Stalled partial-fill scenario ─────────────────────────────────────────
+
 
 class TestStallDetection:
     """
@@ -342,6 +356,7 @@ class TestStallDetection:
 
 # ── Protocol conformance ───────────────────────────────────────────────────
 
+
 class TestProtocolConformance:
     """MockATP must satisfy all three runtime-checkable Protocols."""
 
@@ -360,15 +375,18 @@ class TestProtocolConformance:
 
 # ── Engine isolation check ─────────────────────────────────────────────────
 
+
 def test_engine_does_not_import_pywinauto():
     """
     Importing engine.calculator must NOT load pywinauto into sys.modules.
     This ensures the engine stays pure and portable.
     """
     import sys
+
     # Reload to ensure clean state
     import importlib
     import engine.calculator  # noqa: F401
+
     importlib.reload(engine.calculator)
     assert "pywinauto" not in sys.modules, (
         "engine.calculator imported pywinauto — keep ATP imports inside adapters/atp_*.py only"

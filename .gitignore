@@ -24,6 +24,7 @@ signals.json
 *.json
 !fidelity_rebalancer/tests/fixtures/*.json
 !fidelity_rebalancer/accounts.example.json
+!strategy_map.example.json
 
 # OS
 .DS_Store

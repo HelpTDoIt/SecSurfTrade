@@ -1,6 +1,7 @@
 """
 Tests for state.compare — round-trip identity and seeded-diff detection.
 """
+
 from __future__ import annotations
 
 import copy
@@ -30,6 +31,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
+
 def _make_minimal_state(generator: str = "engine") -> RebalanceState:
     """Build a small but complete RebalanceState for parametric tests."""
     return RebalanceState(
@@ -38,20 +40,22 @@ def _make_minimal_state(generator: str = "engine") -> RebalanceState:
         inputs=Inputs(
             accounts=[
                 AccountInput(
-                    name="Roth IRA",
+                    name="Test Retirement",
                     type="retirement",
                     cash_reserve=0.0,
                     positions=[
-                        PositionInput(symbol="EEM", quantity=200.0, price=62.71, value=12542.0),
+                        PositionInput(
+                            symbol="EEM", quantity=200.0, price=62.71, value=12542.0
+                        ),
                     ],
                     cash_spaxx=100.0,
-                    strategy_allocations={"Prismatic Prudence": 1.0},
+                    strategy_allocations={"Strategy Alpha": 1.0},
                 )
             ],
             signals=[
                 SignalInput(
-                    account="Roth IRA",
-                    strategy="Prismatic Prudence",
+                    account="Test Retirement",
+                    strategy="Strategy Alpha",
                     current_ticker="EEM",
                     new_ticker="EWY",
                 )
@@ -60,12 +64,12 @@ def _make_minimal_state(generator: str = "engine") -> RebalanceState:
             config=EngineConfig(),
         ),
         computed=Computed(
-            cash_ok={"Roth IRA": False},
-            one_share_total={"Roth IRA": 55.0},
+            cash_ok={"Test Retirement": False},
+            one_share_total={"Test Retirement": 55.0},
             sells=[
                 SellRecord(
-                    account="Roth IRA",
-                    strategy="Prismatic Prudence",
+                    account="Test Retirement",
+                    strategy="Strategy Alpha",
                     ticker="EEM",
                     shares=200.0,
                     limit_price=62.71,
@@ -74,8 +78,8 @@ def _make_minimal_state(generator: str = "engine") -> RebalanceState:
             ],
             buy_allocations=[
                 BuyAllocationRecord(
-                    account="Roth IRA",
-                    strategy="Prismatic Prudence",
+                    account="Test Retirement",
+                    strategy="Strategy Alpha",
                     ticker="EWY",
                     dollar_target=12642.0,
                     limit_price=55.0,
@@ -86,8 +90,8 @@ def _make_minimal_state(generator: str = "engine") -> RebalanceState:
             sell_chunks=[
                 ChunkRecord(
                     chunk_id="s1",
-                    account="Roth IRA",
-                    strategy="Prismatic Prudence",
+                    account="Test Retirement",
+                    strategy="Strategy Alpha",
                     ticker="EEM",
                     idx=0,
                     shares=200.0,
@@ -98,8 +102,8 @@ def _make_minimal_state(generator: str = "engine") -> RebalanceState:
             buy_chunks=[
                 ChunkRecord(
                     chunk_id="b1",
-                    account="Roth IRA",
-                    strategy="Prismatic Prudence",
+                    account="Test Retirement",
+                    strategy="Strategy Alpha",
                     ticker="EWY",
                     idx=0,
                     shares=229,
@@ -112,6 +116,7 @@ def _make_minimal_state(generator: str = "engine") -> RebalanceState:
 
 
 # ── round-trip identity ────────────────────────────────────────────────────
+
 
 def test_round_trip_identity_no_diffs(tmp_path):
     """Export engine state, reload it, compare with itself → zero diffs."""
@@ -127,36 +132,60 @@ def test_round_trip_with_calc_export_fixture():
     """Engine state computed from feb27 CSVs matches calc_export_feb27 fixture."""
     calc = load_state(FIXTURES / "calc_export_feb27.json")
 
-    # Build engine state programmatically from the same inputs
     from cli.compute import _build_state
+    import cli.compute as _compute_module
 
     signals = {
-        "World Try -Top":     {"current": "EIS",  "new": "EIS"},
-        "SPDR Respectable":   {"current": "SMH",  "new": "SMH"},
-        "Prismatic Prudence": {"current": "EEM",  "new": "EWY"},
-        "Future Theme + CAPE":{"current": "AOR",  "new": "AOR"},
-        "Leverage":           {"current": "PILL", "new": "PILL"},
+        "Strategy Gamma": {"current": "EIS", "new": "EIS"},
+        "Strategy Beta": {"current": "SMH", "new": "SMH"},
+        "Strategy Alpha": {"current": "EEM", "new": "EWY"},
+        "Strategy Delta": {"current": "AOR", "new": "AOR"},
+        "Strategy Epsilon": {"current": "PILL", "new": "PILL"},
     }
-    closes = {"EIS": 28.50, "SMH": 200.0, "EEM": 62.71, "AOR": 45.0, "EWY": 55.0, "PILL": 30.0}
+    closes = {
+        "EIS": 28.50,
+        "SMH": 200.0,
+        "EEM": 62.71,
+        "AOR": 45.0,
+        "EWY": 55.0,
+        "PILL": 30.0,
+    }
+
+    # Build a self-contained test config from the fixture (avoids production accounts.json dependency).
+    test_config = {
+        a.name: {
+            "type": a.type,
+            "cashReserve": a.cash_reserve,
+            "strategies": a.strategy_allocations,
+        }
+        for a in calc.inputs.accounts
+    }
 
     from adapters.csv_reader import read_fidelity_csv
+
     accounts_raw = {}
-    for csv_path in sorted((FIXTURES).glob("*.csv")):
+    for csv_path in sorted(FIXTURES.glob("*.csv")):
         p = read_fidelity_csv(csv_path)
-        from cli.compute import ACCOUNTS_CONFIG
-        if p.account_name in ACCOUNTS_CONFIG:
+        if p.account_name in test_config:
             accounts_raw[p.account_name] = {
                 "positions": {sym: pos.model_dump() for sym, pos in p.positions.items()}
             }
 
-    engine = _build_state(accounts_raw, signals, closes)
+    original_config = _compute_module.ACCOUNTS_CONFIG
+    _compute_module.ACCOUNTS_CONFIG = test_config
+    try:
+        engine = _build_state(accounts_raw, signals, closes)
+    finally:
+        _compute_module.ACCOUNTS_CONFIG = original_config
+
     diffs = compare_states(engine, calc)
-    assert diffs == [], f"Feb27 parity failures:\n" + "\n".join(
+    assert diffs == [], "Feb27 parity failures:\n" + "\n".join(
         f"  {d.path}: engine={d.engine_val} calc={d.calc_val}" for d in diffs
     )
 
 
 # ── schema round-trip validation ───────────────────────────────────────────
+
 
 def test_architecture_example_validates():
     """The JSON snippet from ARCHITECTURE.md must pass Pydantic validation."""
@@ -168,6 +197,7 @@ def test_architecture_example_validates():
 
 
 # ── seeded diff detection ──────────────────────────────────────────────────
+
 
 def test_diff_detected_wrong_shares():
     engine = _make_minimal_state()
@@ -222,7 +252,7 @@ def test_diff_detected_wrong_buy_chunk_cost():
 def test_diff_detected_wrong_cash_ok():
     engine = _make_minimal_state()
     calc = _make_minimal_state(generator="react_calc")
-    calc.computed.cash_ok["Roth IRA"] = True
+    calc.computed.cash_ok["Test Retirement"] = True
 
     diffs = compare_states(engine, calc)
     paths = [d.path for d in diffs]

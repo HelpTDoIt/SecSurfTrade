@@ -2,6 +2,7 @@
 Tests for engine.calculator — including Feb 27 parity test.
 All expected values are hand-traced from the React JS source.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,8 +19,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 # ── parse_csv / consolidate ────────────────────────────────────────────────
 
+
 def test_parse_csv_filters_metadata_lines():
-    text = '"Roth IRA"\nAccount Name,Symbol,Quantity,Last Price,Current Value\nRoth IRA,EIS,100,$28.50,$2850.00\n'
+    text = '"Test Retirement"\nAccount Name,Symbol,Quantity,Last Price,Current Value\nTest Retirement,EIS,100,$28.50,$2850.00\n'
     rows = parse_csv(text)
     assert len(rows) == 1
     assert rows[0]["Symbol"] == "EIS"
@@ -27,7 +29,7 @@ def test_parse_csv_filters_metadata_lines():
 
 
 def test_parse_csv_strips_dollar_and_signs():
-    text = 'Account Name,Symbol,Quantity,Last Price,Current Value\nRoth IRA,EEM,200,$62.71,$12542.00\n'
+    text = "Account Name,Symbol,Quantity,Last Price,Current Value\nTest Retirement,EEM,200,$62.71,$12542.00\n"
     rows = parse_csv(text)
     assert rows[0]["Last Price"] == "62.71"
     assert rows[0]["Current Value"] == "12542.00"
@@ -35,11 +37,23 @@ def test_parse_csv_strips_dollar_and_signs():
 
 def test_consolidate_sums_duplicate_symbols():
     rows = [
-        {"Account Name": "Individual - TOD", "Symbol": "SMH", "Quantity": "30", "Current Value": "6000", "Last Price": "200"},
-        {"Account Name": "Individual - TOD", "Symbol": "SMH", "Quantity": "20", "Current Value": "4000", "Last Price": "200"},
+        {
+            "Account Name": "Test Taxable",
+            "Symbol": "SMH",
+            "Quantity": "30",
+            "Current Value": "6000",
+            "Last Price": "200",
+        },
+        {
+            "Account Name": "Test Taxable",
+            "Symbol": "SMH",
+            "Quantity": "20",
+            "Current Value": "4000",
+            "Last Price": "200",
+        },
     ]
     result = consolidate(rows)
-    assert result["account_name"] == "Individual - TOD"
+    assert result["account_name"] == "Test Taxable"
     smh = result["positions"]["SMH"]
     assert smh["quantity"] == 50.0
     assert smh["value"] == 10000.0
@@ -49,8 +63,20 @@ def test_consolidate_sums_duplicate_symbols():
 def test_consolidate_price_from_first_occurrence():
     """Price must come from the first row even if second row has a different value."""
     rows = [
-        {"Account Name": "A", "Symbol": "SMH", "Quantity": "30", "Current Value": "6000", "Last Price": "200"},
-        {"Account Name": "A", "Symbol": "SMH", "Quantity": "20", "Current Value": "4200", "Last Price": "210"},
+        {
+            "Account Name": "A",
+            "Symbol": "SMH",
+            "Quantity": "30",
+            "Current Value": "6000",
+            "Last Price": "200",
+        },
+        {
+            "Account Name": "A",
+            "Symbol": "SMH",
+            "Quantity": "20",
+            "Current Value": "4200",
+            "Last Price": "210",
+        },
     ]
     result = consolidate(rows)
     assert result["positions"]["SMH"]["price"] == 200.0
@@ -60,6 +86,7 @@ def test_consolidate_from_csv_fixture():
     """SMH in both Cash and Margin lots must consolidate to 50 shares."""
     text = (FIXTURES / "individual_tod.csv").read_text(encoding="utf-8")
     from engine.calculator import parse_csv
+
     rows = parse_csv(text)
     result = consolidate(rows)
     smh = result["positions"]["SMH"]
@@ -69,6 +96,7 @@ def test_consolidate_from_csv_fixture():
 
 # ── calc_trades (Feb 27 parity) ────────────────────────────────────────────
 
+
 def _load_fixtures():
     inputs = json.loads((FIXTURES / "feb27.json").read_text())
     expected = json.loads((FIXTURES / "feb27_expected.json").read_text())
@@ -77,7 +105,7 @@ def _load_fixtures():
 
 def test_parity_cash_ok():
     inputs, expected = _load_fixtures()
-    acct = "Roth IRA"
+    acct = "Test Retirement"
     cfg = inputs["accounts"][acct]["config"]
     positions = inputs["accounts"][acct]["positions"]
     result = calc_trades(cfg, positions, inputs["signals"], inputs["closes"])
@@ -86,7 +114,7 @@ def test_parity_cash_ok():
 
 def test_parity_one_share_total():
     inputs, expected = _load_fixtures()
-    acct = "Roth IRA"
+    acct = "Test Retirement"
     cfg = inputs["accounts"][acct]["config"]
     positions = inputs["accounts"][acct]["positions"]
     result = calc_trades(cfg, positions, inputs["signals"], inputs["closes"])
@@ -95,7 +123,7 @@ def test_parity_one_share_total():
 
 def test_parity_sells():
     inputs, expected = _load_fixtures()
-    acct = "Roth IRA"
+    acct = "Test Retirement"
     cfg = inputs["accounts"][acct]["config"]
     positions = inputs["accounts"][acct]["positions"]
     result = calc_trades(cfg, positions, inputs["signals"], inputs["closes"])
@@ -111,7 +139,7 @@ def test_parity_sells():
 
 def test_parity_buy_allocations():
     inputs, expected = _load_fixtures()
-    acct = "Roth IRA"
+    acct = "Test Retirement"
     cfg = inputs["accounts"][acct]["config"]
     positions = inputs["accounts"][acct]["positions"]
     result = calc_trades(cfg, positions, inputs["signals"], inputs["closes"])
@@ -127,7 +155,7 @@ def test_parity_buy_allocations():
 
 def test_parity_sell_chunks():
     inputs, expected = _load_fixtures()
-    acct = "Roth IRA"
+    acct = "Test Retirement"
     cfg = inputs["accounts"][acct]["config"]
     positions = inputs["accounts"][acct]["positions"]
     result = calc_trades(cfg, positions, inputs["signals"], inputs["closes"])
@@ -142,7 +170,7 @@ def test_parity_sell_chunks():
 
 def test_parity_buy_chunks():
     inputs, expected = _load_fixtures()
-    acct = "Roth IRA"
+    acct = "Test Retirement"
     cfg = inputs["accounts"][acct]["config"]
     positions = inputs["accounts"][acct]["positions"]
     result = calc_trades(cfg, positions, inputs["signals"], inputs["closes"])
@@ -156,6 +184,7 @@ def test_parity_buy_chunks():
 
 
 # ── alloc_buys: pure-rebalance (no trades, cashOk=True) ───────────────────
+
 
 def test_alloc_buys_rebalance_no_trade():
     """
@@ -174,8 +203,17 @@ def test_alloc_buys_rebalance_no_trade():
     # A deficit = 0.5*1100 - 400 = 150, B deficit = 0.5*1100 - 500 = 50
     # avail = 100
     buys = _alloc_buys(
-        list(strategies.keys()), strategies, signals, closes,
-        s_pos, [], ["A", "B"], True, 0.0, 100.0, total_pool,
+        list(strategies.keys()),
+        strategies,
+        signals,
+        closes,
+        s_pos,
+        [],
+        ["A", "B"],
+        True,
+        0.0,
+        100.0,
+        total_pool,
     )
     tickers = {b["ticker"] for b in buys}
     assert "AA" in tickers
@@ -197,8 +235,17 @@ def test_alloc_buys_single_trade_no_cash():
     }
     # sell_proceeds = 500, depl_cash = 5 (cashOk=False because oneShare>5)
     buys = _alloc_buys(
-        list(strategies.keys()), strategies, signals, closes,
-        s_pos, ["A"], ["B"], False, 500.0, 5.0, 1005.0,
+        list(strategies.keys()),
+        strategies,
+        signals,
+        closes,
+        s_pos,
+        ["A"],
+        ["B"],
+        False,
+        500.0,
+        5.0,
+        1005.0,
     )
     assert len(buys) == 1
     assert buys[0]["ticker"] == "BB"
@@ -213,12 +260,23 @@ def test_alloc_buys_no_trade_no_cash_returns_empty():
     closes = {"AA": 100.0}
     s_pos = {"A": {"ticker": "AA", "value": 500.0, "quantity": 5, "price": 100.0}}
     buys = _alloc_buys(
-        ["A"], strategies, signals, closes, s_pos, [], ["A"], False, 0.0, 0.0, 500.0,
+        ["A"],
+        strategies,
+        signals,
+        closes,
+        s_pos,
+        [],
+        ["A"],
+        False,
+        0.0,
+        0.0,
+        500.0,
     )
     assert buys == []
 
 
 # ── engine module I/O check (no open/requests/print) ──────────────────────
+
 
 def test_no_io_in_engine():
     """Verify engine modules contain no file/network/print I/O."""
@@ -228,5 +286,11 @@ def test_no_io_in_engine():
         assert "open(" not in src, f"{py_file.name} contains open()"
         assert "requests" not in src, f"{py_file.name} imports requests"
         # allow print only if it appears inside a string literal check
-        lines_with_print = [l for l in src.splitlines() if "print(" in l and not l.strip().startswith("#")]
-        assert not lines_with_print, f"{py_file.name} contains print(): {lines_with_print}"
+        lines_with_print = [
+            l
+            for l in src.splitlines()
+            if "print(" in l and not l.strip().startswith("#")
+        ]
+        assert not lines_with_print, (
+            f"{py_file.name} contains print(): {lines_with_print}"
+        )

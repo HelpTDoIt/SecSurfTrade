@@ -13,6 +13,7 @@ waits. After login, it offers to save your credentials in the terminal so future
 runs auto-login.  Credentials are stored in the OS keyring (Windows Credential
 Manager on Windows).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,27 +29,41 @@ PORTAL_URL = "https://www.sumgrowth.com/MyPages/Strategies2.aspx"
 # Persistent browser profile — stores cookies so login survives between runs.
 PROFILE_DIR = Path(__file__).resolve().parent.parent / ".browser_profile"
 
-# Maps SectorSurfer portal names → engine strategy names.
-#
-# Keys are matched with _resolve_strategy(), which:
-#   1. Tries exact match first.
-#   2. Falls back to case-insensitive, whitespace-normalized match.
-#   3. Falls back to the same after stripping a leading year prefix (YExx:).
-#
-# This means the map survives SectorSurfer rolling from "YE25:" to "YE26:"
-# without any code change.  Update the keys only if the base name changes.
-STRATEGY_MAP: dict[str, str] = {
-    # Current names (portal as of 2026-05)
-    "YE25: Prismatic Prudence + frdm - js": "Prismatic Prudence",
-    "YE25: Future Theme + ~ CAPE Value":    "Future Theme + CAPE",
-    # Previous names kept for backward compatibility
-    "YE25: Prismatic Prudence":             "Prismatic Prudence",
-    "YE25: Future Theme + ~C":              "Future Theme + CAPE",
-    # Names without year prefix (year rollover handled by _normalize)
-    "World Try - Top":                      "World Try -Top",
-    "YE25: SPDR Respectable":               "SPDR Respectable",
-    "YE25: Leverage":                       "Leverage",
-}
+
+def _load_strategy_map() -> dict[str, str]:
+    """Load portal→engine strategy name mappings from strategy_map.json (gitignored).
+
+    Keys beginning with '_' are treated as comments and skipped.
+    Matching uses _resolve_strategy() which normalizes year prefixes (YExx:) and
+    whitespace, so the map survives the annual year rollover without edits.
+
+    To set up: copy strategy_map.example.json to strategy_map.json and fill in
+    your actual SectorSurfer portal strategy names.
+    """
+    map_file = Path(__file__).resolve().parent.parent / "strategy_map.json"
+    if not map_file.exists():
+        sys.stderr.write(
+            f"WARNING: strategy_map.json not found — strategy matching disabled.\n"
+            f"  Copy strategy_map.example.json to strategy_map.json and add your names.\n"
+        )
+        sys.stderr.flush()
+        return {}
+    try:
+        data = json.loads(map_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            sys.stderr.write(
+                f"ERROR: strategy_map.json must be a JSON object, got {type(data).__name__}\n"
+            )
+            sys.stderr.flush()
+            return {}
+        return {k: v for k, v in data.items() if not str(k).startswith("_")}
+    except Exception as exc:
+        sys.stderr.write(f"ERROR reading strategy_map.json: {exc}\n")
+        sys.stderr.flush()
+        return {}
+
+
+STRATEGY_MAP: dict[str, str] = _load_strategy_map()
 
 # Portal rows that are sub-strategies or benchmarks — never trade directly.
 _IGNORE_EXACT: frozenset[str] = frozenset({"BMS-RR", "SSTOP"})
@@ -87,6 +102,7 @@ def _strip_dash(ticker: str) -> str:
 
 
 # ── logging ────────────────────────────────────────────────────────────────────
+
 
 def _log(msg: str) -> None:
     """Write a timestamped diagnostic line to stderr, flushed immediately."""
@@ -208,12 +224,10 @@ _EXTRACT_JS = r"""
 """
 
 
-
-
 # ── credential storage ────────────────────────────────────────────────────────
 
 _KEYRING_SERVICE = "sectorsurfer"
-CREDS_FILE = PROFILE_DIR / "creds.json"   # kept for one-time migration only
+CREDS_FILE = PROFILE_DIR / "creds.json"  # kept for one-time migration only
 
 
 def _load_creds_legacy() -> dict | None:
@@ -223,7 +237,7 @@ def _load_creds_legacy() -> dict | None:
     try:
         data = json.loads(CREDS_FILE.read_text(encoding="utf-8"))
         if data.get("username") and data.get("password"):
-            _log(f"Found legacy creds.json for '{data['username']}'.")
+            _log("Found legacy creds.json.")
             return data
     except Exception as exc:
         _log(f"Failed to read legacy creds.json: {exc}")
@@ -254,7 +268,7 @@ def _load_creds() -> dict | None:
         return None
 
     if username and password:
-        _log(f"Loaded stored credentials for '{username}' from keyring.")
+        _log("Loaded stored credentials from keyring.")
         return {"username": username, "password": password}
 
     # Nothing in keyring — check for legacy plaintext file and migrate.
@@ -278,9 +292,10 @@ def _save_creds(username: str, password: str) -> None:
     """Persist credentials to the OS keyring (Windows Credential Manager on Windows)."""
     try:
         import keyring
+
         keyring.set_password(_KEYRING_SERVICE, "username", username)
         keyring.set_password(_KEYRING_SERVICE, "password", password)
-        _log(f"Credentials for '{username}' saved to keyring.")
+        _log("Credentials saved to keyring.")
         if CREDS_FILE.exists():
             CREDS_FILE.unlink(missing_ok=True)
             _log("Removed legacy creds.json.")
@@ -299,7 +314,7 @@ def _do_login(page, creds: dict) -> bool:
     match hidden registration fields like txtCreateUserName.
     Tries clicking the visible submit button; falls back to pressing Enter.
     """
-    _log(f"Auto-login: filling form for '{creds['username']}'...")
+    _log("Auto-login: filling form...")
     try:
         # Scope everything to the login panel — prevents matching
         # hidden inputs like txtCreateUserName (registration form).
@@ -322,7 +337,11 @@ def _do_login(page, creds: dict) -> bool:
         # ASP.NET Login control renders an input[type=submit] inside the panel.
         # Fall back to pressing Enter if no button is found.
         submitted = False
-        for sel in ("input[type='submit']", "button[type='submit']", "input[type='button']"):
+        for sel in (
+            "input[type='submit']",
+            "button[type='submit']",
+            "input[type='button']",
+        ):
             try:
                 btn = panel.locator(sel).first
                 if btn.count() > 0 and btn.is_visible(timeout=1_000):
@@ -371,6 +390,7 @@ def _offer_save_creds() -> None:
     _log("Offering to save credentials for future auto-login...")
     try:
         import getpass
+
         sys.stderr.write(
             "\n"
             "  Login detected!\n"
@@ -382,7 +402,7 @@ def _offer_save_creds() -> None:
         if not username:
             _log("  User pressed Enter — credential save skipped.")
             return
-        _log(f"  Username entered: '{username}'. Prompting for password...")
+        _log("  Username entered. Prompting for password...")
         password = getpass.getpass("  Password: ")
         if password:
             _save_creds(username, password)
@@ -403,7 +423,9 @@ def _scrape(*, debug: bool) -> list[dict]:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        _log("ERROR: playwright not installed. Run: pip install playwright && playwright install chromium")
+        _log(
+            "ERROR: playwright not installed. Run: pip install playwright && playwright install chromium"
+        )
         sys.exit(1)
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -435,13 +457,17 @@ def _scrape(*, debug: bool) -> list[dict]:
             # login form at the strategies2.aspx URL itself, no redirect).
             def _login_visible() -> bool:
                 try:
-                    v = page.locator("[id*='pnlLogin'],[name*='pnlLogin']").first.is_visible(timeout=2_000)
+                    v = page.locator(
+                        "[id*='pnlLogin'],[name*='pnlLogin']"
+                    ).first.is_visible(timeout=2_000)
                     _log(f"  pnlLogin visible check: {v}")
                     return v
                 except Exception as exc:
                     fallback = "strategies2" not in page.url.lower()
-                    _log(f"  pnlLogin check raised {type(exc).__name__} — URL fallback: "
-                         f"'strategies2' in URL={not fallback}, so login_visible={fallback}")
+                    _log(
+                        f"  pnlLogin check raised {type(exc).__name__} — URL fallback: "
+                        f"'strategies2' in URL={not fallback}, so login_visible={fallback}"
+                    )
                     return fallback
 
             login_visible = _login_visible()
@@ -459,8 +485,10 @@ def _scrape(*, debug: bool) -> list[dict]:
                         _log("Auto-login succeeded. Refreshing stored credentials.")
                         _save_creds(creds["username"], creds["password"])
                     else:
-                        _log("Auto-login FAILED (wrong credentials?). "
-                             "Clearing stored credentials and switching to manual login.")
+                        _log(
+                            "Auto-login FAILED (wrong credentials?). "
+                            "Clearing stored credentials and switching to manual login."
+                        )
                         if CREDS_FILE.exists():
                             CREDS_FILE.unlink()
                             _log(f"Deleted {CREDS_FILE}")
@@ -505,7 +533,8 @@ def _scrape(*, debug: bool) -> list[dict]:
                         _log(f"Manual login wait ended: {type(exc).__name__}: {exc}")
                         print(
                             "  Warning: login panel did not disappear. Proceeding anyway.",
-                            file=sys.stderr, flush=True,
+                            file=sys.stderr,
+                            flush=True,
                         )
 
                 if logged_in:
@@ -513,7 +542,9 @@ def _scrape(*, debug: bool) -> list[dict]:
                     page.goto(PORTAL_URL, wait_until="load", timeout=30_000)
                     _log(f"Re-navigation complete. URL: {page.url}")
                 else:
-                    _log("Warning: not confirmed logged in. Attempting extraction anyway.")
+                    _log(
+                        "Warning: not confirmed logged in. Attempting extraction anyway."
+                    )
             else:
                 _log("Already authenticated — proceeding directly to extraction.")
 
@@ -529,13 +560,17 @@ def _scrape(*, debug: bool) -> list[dict]:
                 )
                 _log("SELL: tokens found in page text. Proceeding with extraction.")
             except Exception as exc:
-                _log(f"Wait for SELL: timed out ({exc}). Extracting whatever is available.")
+                _log(
+                    f"Wait for SELL: timed out ({exc}). Extracting whatever is available."
+                )
 
             if debug:
                 dbg = Path(__file__).resolve().parent.parent / "debug"
                 dbg.mkdir(exist_ok=True)
                 page.screenshot(path=str(dbg / "ss_strategies.png"), full_page=True)
-                (dbg / "ss_strategies.html").write_text(page.content(), encoding="utf-8")
+                (dbg / "ss_strategies.html").write_text(
+                    page.content(), encoding="utf-8"
+                )
                 _log(f"Debug files written to {dbg}/")
 
             _log("Running DOM extraction JavaScript (scoped to first table)...")
@@ -561,6 +596,7 @@ def _scrape(*, debug: bool) -> list[dict]:
 
 # ── signal assembly ────────────────────────────────────────────────────────────
 
+
 def _fetch_closes(tickers: list[str]) -> dict[str, float]:
     """Previous-day closing prices via yfinance."""
     closes: dict[str, float] = {}
@@ -581,7 +617,9 @@ def _fetch_closes(tickers: list[str]) -> dict[str, float]:
                 closes[ticker] = price
                 _log(f"  {ticker}: {price}")
             else:
-                _log(f"  {ticker}: no history (market closed, bad ticker, or de-listed?)")
+                _log(
+                    f"  {ticker}: no history (market closed, bad ticker, or de-listed?)"
+                )
         except Exception as exc:
             _log(f"  {ticker}: fetch error — {exc}")
 
@@ -596,10 +634,10 @@ def build_signals(raw: list[dict], *, verbose: bool = True) -> dict:
 
     for row in raw:
         portal_name: str = (row.get("name") or "").strip()
-        sell: str        = _strip_dash(row.get("sell") or "")
-        buy: str         = _strip_dash(row.get("buy") or "")
-        has_trade: bool  = bool(row.get("has_trade"))
-        is_done: bool    = bool(row.get("is_done"))
+        sell: str = _strip_dash(row.get("sell") or "")
+        buy: str = _strip_dash(row.get("buy") or "")
+        has_trade: bool = bool(row.get("has_trade"))
+        is_done: bool = bool(row.get("is_done"))
 
         if _ignore(portal_name):
             _log(f"  IGNORE  {portal_name!r}")
@@ -614,7 +652,9 @@ def build_signals(raw: list[dict], *, verbose: bool = True) -> dict:
             # Log them for debugging but don't surface them as user warnings.
             if sell or buy:
                 unrecognized.append(portal_name)
-                _log(f"  UNRECOGNIZED  {portal_name!r}  (has tickers but not in STRATEGY_MAP)")
+                _log(
+                    f"  UNRECOGNIZED  {portal_name!r}  (has tickers but not in STRATEGY_MAP)"
+                )
             else:
                 _log(f"  SKIP (no tickers, not a strategy row)  {portal_name!r}")
             continue
@@ -627,14 +667,18 @@ def build_signals(raw: list[dict], *, verbose: bool = True) -> dict:
         if is_done and buy:
             current = buy
             new = buy
-            _log(f"  MATCH   {portal_name!r} → {calc_name!r} | "
-                 f"sell={sell!r} buy={buy!r} is_done=True → HOLD {buy!r}")
+            _log(
+                f"  MATCH   {portal_name!r} → {calc_name!r} | "
+                f"sell={sell!r} buy={buy!r} is_done=True → HOLD {buy!r}"
+            )
         else:
             current = sell
             new = buy if buy else current
-            _log(f"  MATCH   {portal_name!r} → {calc_name!r} | "
-                 f"sell={sell!r} buy={buy!r} has_trade={has_trade} → "
-                 f"current={current!r} new={new!r}")
+            _log(
+                f"  MATCH   {portal_name!r} → {calc_name!r} | "
+                f"sell={sell!r} buy={buy!r} has_trade={has_trade} → "
+                f"current={current!r} new={new!r}"
+            )
 
         signals[calc_name] = {"current": current, "new": new}
 
@@ -651,12 +695,9 @@ def build_signals(raw: list[dict], *, verbose: bool = True) -> dict:
             file=sys.stderr,
         )
 
-    all_tickers = sorted({
-        t
-        for sig in signals.values()
-        for t in (sig["current"], sig["new"])
-        if t
-    })
+    all_tickers = sorted(
+        {t for sig in signals.values() for t in (sig["current"], sig["new"]) if t}
+    )
     closes = _fetch_closes(all_tickers)
 
     return {"signals": signals, "closes": closes}
@@ -664,20 +705,24 @@ def build_signals(raw: list[dict], *, verbose: bool = True) -> dict:
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Scrape SectorSurfer signals → signals.json"
     )
     parser.add_argument(
-        "--out", default="signals.json",
+        "--out",
+        default="signals.json",
         help="Output path (default: signals.json)",
     )
     parser.add_argument(
-        "--debug", action="store_true",
+        "--debug",
+        action="store_true",
         help="Save page screenshot + HTML to debug/ for selector troubleshooting",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print signals to stdout without writing the file",
     )
     args = parser.parse_args()
