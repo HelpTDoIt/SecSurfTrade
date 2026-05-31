@@ -11,6 +11,7 @@ Usage (from SecSurfTrade/ or fidelity_rebalancer/):
     python -m fidelity_rebalancer.cli.strategy --state today.json --export today.json
     python -m cli.strategy --state today.json --export today.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -71,6 +72,7 @@ def _fetch_watchlist(symbols: list[str], source: str) -> dict[str, WatchlistRow]
     """Return WatchlistRow for each symbol from the selected source."""
     if source == "atp":
         from adapters.atp_watchlist import ATPWatchlistAdapter
+
         print("Fetching market data from Fidelity Trader+ Watchlist (OCR)...")
         rows = ATPWatchlistAdapter().get_watchlist()
         missing = [s for s in symbols if s not in rows]
@@ -91,7 +93,9 @@ def _fetch_watchlist(symbols: list[str], source: str) -> dict[str, WatchlistRow]
 
 def _empty_l2(symbol: str) -> Level2Snapshot:
     return Level2Snapshot(
-        symbol=symbol, bids=[], asks=[],
+        symbol=symbol,
+        bids=[],
+        asks=[],
         ts=datetime.now(tz=timezone.utc),
     )
 
@@ -111,7 +115,9 @@ _THIN_TICKER_PCT = 3.0  # order > this % of ADV → recommend L2
 
 
 def _detect_thin_tickers(
-    sells: list, buys: list, watchlist: dict[str, WatchlistRow],
+    sells: list,
+    buys: list,
+    watchlist: dict[str, WatchlistRow],
 ) -> list[tuple[str, str, float]]:
     """Return [(ticker, side, pct_of_adv)] for orders exceeding _THIN_TICKER_PCT of ADV."""
     thin: list[tuple[str, str, float]] = []
@@ -130,11 +136,15 @@ def _detect_thin_tickers(
     return sorted(thin, key=lambda t: t[2], reverse=True)
 
 
-def _rechunk_sell_pov(sell, strat, *, adv, spread_bps, sigma_bps=_DAILY_SIGMA_BPS) -> tuple[list[ChunkRecord], dict]:
+def _rechunk_sell_pov(
+    sell, strat, *, adv, spread_bps, sigma_bps=_DAILY_SIGMA_BPS
+) -> tuple[list[ChunkRecord], dict]:
     chunk_dicts, info = build_chunks_pov(
         total_shares=float(sell.shares),
         limit_price=strat.limit_price,
-        adv=adv, spread_bps=spread_bps, side="sell",
+        adv=adv,
+        spread_bps=spread_bps,
+        side="sell",
         sigma_bps=sigma_bps,
     )
     chunks = []
@@ -142,24 +152,40 @@ def _rechunk_sell_pov(sell, strat, *, adv, spread_bps, sigma_bps=_DAILY_SIGMA_BP
     for cd in chunk_dicts:
         cid = f"s_{_chunk_slug(sell.account)}_{sell.ticker}_{cd['idx']}"
         chunk_ids.append(cid)
-        chunks.append(ChunkRecord(
-            chunk_id=cid, account=sell.account, strategy=sell.strategy,
-            ticker=sell.ticker, idx=cd["idx"], shares=cd["shares"],
-            limit_price=cd["limit_price"], cost=cd["cost"],
-        ))
+        chunks.append(
+            ChunkRecord(
+                chunk_id=cid,
+                account=sell.account,
+                strategy=sell.strategy,
+                ticker=sell.ticker,
+                idx=cd["idx"],
+                shares=cd["shares"],
+                limit_price=cd["limit_price"],
+                cost=cd["cost"],
+            )
+        )
     strat.chunk_ids = chunk_ids
     return chunks, info
 
 
-def _rechunk_buy_pov(buy, strat, *, adv, spread_bps, sigma_bps=_DAILY_SIGMA_BPS) -> tuple[list[ChunkRecord], dict]:
+def _rechunk_buy_pov(
+    buy, strat, *, adv, spread_bps, sigma_bps=_DAILY_SIGMA_BPS
+) -> tuple[list[ChunkRecord], dict]:
     if strat.limit_price <= 0:
-        return [], {"tier": 0, "tier_label": "unknown_adv", "n_chunks": 0,
-                    "pov_pct": None, "est_impact_bps": 0.0}
+        return [], {
+            "tier": 0,
+            "tier_label": "unknown_adv",
+            "n_chunks": 0,
+            "pov_pct": None,
+            "est_impact_bps": 0.0,
+        }
     target_shares = float(math.floor(buy.dollar_target / strat.limit_price))
     chunk_dicts, info = build_chunks_pov(
         total_shares=target_shares,
         limit_price=strat.limit_price,
-        adv=adv, spread_bps=spread_bps, side="buy",
+        adv=adv,
+        spread_bps=spread_bps,
+        side="buy",
         sigma_bps=sigma_bps,
     )
     chunks = []
@@ -167,11 +193,18 @@ def _rechunk_buy_pov(buy, strat, *, adv, spread_bps, sigma_bps=_DAILY_SIGMA_BPS)
     for cd in chunk_dicts:
         cid = f"b_{_chunk_slug(buy.account)}_{buy.ticker}_{cd['idx']}"
         chunk_ids.append(cid)
-        chunks.append(ChunkRecord(
-            chunk_id=cid, account=buy.account, strategy=buy.strategy,
-            ticker=buy.ticker, idx=cd["idx"], shares=cd["shares"],
-            limit_price=cd["limit_price"], cost=cd["cost"],
-        ))
+        chunks.append(
+            ChunkRecord(
+                chunk_id=cid,
+                account=buy.account,
+                strategy=buy.strategy,
+                ticker=buy.ticker,
+                idx=cd["idx"],
+                shares=cd["shares"],
+                limit_price=cd["limit_price"],
+                cost=cd["cost"],
+            )
+        )
     strat.chunk_ids = chunk_ids
     return chunks, info
 
@@ -185,9 +218,9 @@ def _pov_bullets(info: dict) -> list[str]:
     impact = info.get("est_impact_bps") or 0.0
     n = info.get("n_chunks", 0)
     desc = {
-        "invisible":     "<1% ADV + tight spread — single order is invisible to the market.",
-        "standard":      "1-5% ADV — standard slicing to stay near 5% POV.",
-        "aggressive":    "5-10% ADV — aggressive slicing to limit impact and signaling.",
+        "invisible": "<1% ADV + tight spread — single order is invisible to the market.",
+        "standard": "1-5% ADV — standard slicing to stay near 5% POV.",
+        "aggressive": "5-10% ADV — aggressive slicing to limit impact and signaling.",
         "market_moving": ">10% ADV — market-moving size, slicing aggressively (consider multi-day).",
     }.get(label, label)
     return [
@@ -203,6 +236,7 @@ def _reorder_chunks_largest_first(
 ) -> list[ChunkRecord]:
     """Sort chunks within each (account, ticker) group by shares descending, re-index."""
     from itertools import groupby
+
     skip = skip_tickers or set()
     key_fn = lambda c: (c.account, c.ticker)
     groups = {k: list(g) for k, g in groupby(sorted(chunks, key=key_fn), key=key_fn)}
@@ -221,6 +255,7 @@ def _reorder_chunks_largest_first(
 def _load_confirmed_proceeds(raw: str) -> dict[str, float]:
     """Parse --confirmed-proceeds value (JSON string or file path)."""
     import json
+
     path = Path(raw)
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
@@ -231,7 +266,9 @@ def _adjust_buy_budgets(state, confirmed: dict[str, float]) -> None:
     """Scale buy dollar_target per account based on actual vs estimated proceeds."""
     est_by_account: dict[str, float] = {}
     for sell in state.computed.sells:
-        est_by_account[sell.account] = est_by_account.get(sell.account, 0.0) + sell.est_proceeds
+        est_by_account[sell.account] = (
+            est_by_account.get(sell.account, 0.0) + sell.est_proceeds
+        )
 
     for acct, actual in confirmed.items():
         est = est_by_account.get(acct, 0.0)
@@ -250,7 +287,11 @@ def _adjust_buy_budgets(state, confirmed: dict[str, float]) -> None:
             adjusted += 1
         _log.debug(
             "Confirmed proceeds for %s: $%,.2f (est $%,.2f, ratio %.4f) — %d buy(s) adjusted",
-            acct, actual, est, ratio, adjusted,
+            acct,
+            actual,
+            est,
+            ratio,
+            adjusted,
         )
 
 
@@ -258,8 +299,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate strategies from engine state JSON (adds to state in-place)"
     )
-    parser.add_argument("--state",  required=True, help="Engine state JSON from cli.compute")
-    parser.add_argument("--export", required=True, help="Output path (may be same as --state)")
+    parser.add_argument(
+        "--state", required=True, help="Engine state JSON from cli.compute"
+    )
+    parser.add_argument(
+        "--export", required=True, help="Output path (may be same as --state)"
+    )
     parser.add_argument(
         "--source",
         choices=("yfinance", "atp"),
@@ -272,26 +317,29 @@ def main() -> None:
         default=None,
         metavar="SYM",
         help="Symbols to fetch Level 2 depth via OCR (requires ATP open with L2 panels). "
-             "Pass without arguments to auto-detect thin tickers.",
+        "Pass without arguments to auto-detect thin tickers.",
     )
     parser.add_argument(
         "--confirmed-proceeds",
         default=None,
         metavar="JSON",
-        help='Actual sell proceeds per account (JSON string or file path). '
-             'e.g. \'{"Roth IRA": 12345.67}\'. '
-             'Adjusts buy budgets proportionally vs estimated proceeds.',
+        help="Actual sell proceeds per account (JSON string or file path). "
+        "e.g. '{\"Account Name\": 12345.67}'. "
+        "Adjusts buy budgets proportionally vs estimated proceeds.",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Show per-trade detail lines (ticker, rule, limit price, chunk count). "
-             "Without this flag these are suppressed to avoid capturing sensitive data in logs.",
+        "Without this flag these are suppressed to avoid capturing sensitive data in logs.",
     )
     args = parser.parse_args()
 
     if args.verbose:
-        logging.basicConfig(level=logging.DEBUG, format="%(message)s", stream=sys.stderr)
+        logging.basicConfig(
+            level=logging.DEBUG, format="%(message)s", stream=sys.stderr
+        )
 
     state = load_state(resolve_path(args.state))
 
@@ -301,10 +349,12 @@ def main() -> None:
         _adjust_buy_budgets(state, confirmed)
 
     # Collect all unique tickers across sells and buys
-    all_tickers = sorted({
-        *(sell.ticker for sell in state.computed.sells),
-        *(buy.ticker  for buy  in state.computed.buy_allocations),
-    })
+    all_tickers = sorted(
+        {
+            *(sell.ticker for sell in state.computed.sells),
+            *(buy.ticker for buy in state.computed.buy_allocations),
+        }
+    )
 
     # Batch-fetch market data once for all tickers
     watchlist = _fetch_watchlist(all_tickers, args.source)
@@ -315,11 +365,17 @@ def main() -> None:
     for sym in all_tickers:
         sigma = _realized_vol_bps(sym)
         vol_map[sym] = sigma
-        label = f"{sigma:.0f} bps" if sigma != _DAILY_SIGMA_BPS else f"{sigma:.0f} bps (default)"
+        label = (
+            f"{sigma:.0f} bps"
+            if sigma != _DAILY_SIGMA_BPS
+            else f"{sigma:.0f} bps (default)"
+        )
         print(f"  {sym:6s}  sigma={label}")
 
     # Thin-ticker detection
-    thin = _detect_thin_tickers(state.computed.sells, state.computed.buy_allocations, watchlist)
+    thin = _detect_thin_tickers(
+        state.computed.sells, state.computed.buy_allocations, watchlist
+    )
     if thin:
         print("Thin-ticker detection (order > 3% ADV):")
         for sym, side, pct in thin:
@@ -336,6 +392,7 @@ def main() -> None:
             l2_symbols = thin_syms
     if l2_symbols:
         from adapters.atp_ocr import OCRLevel2Adapter
+
         l2_adapter = OCRLevel2Adapter()
         print(f"Fetching Level 2 depth for {sorted(l2_symbols)}...")
         for sym in sorted(l2_symbols):
@@ -353,8 +410,10 @@ def main() -> None:
     def _get_row(ticker: str) -> WatchlistRow | None:
         row = watchlist.get(ticker)
         if row is None:
-            print(f"  Warning: no market data for {ticker} — using fallback zeros",
-                  file=sys.stderr)
+            print(
+                f"  Warning: no market data for {ticker} — using fallback zeros",
+                file=sys.stderr,
+            )
         return row
 
     now = datetime.now()
@@ -363,9 +422,12 @@ def main() -> None:
     mkt_minutes = (now.hour - 9) * 60 + (now.minute - 30)
     if mkt_minutes < 0 or mkt_minutes > 390:
         mkt_minutes = None  # outside market hours
-    print(f"Volume profile multiplier: {vol_mult:.1f}x (market time {now.strftime('%H:%M')}"
-          f", {mkt_minutes} min since open)" if mkt_minutes is not None
-          else f"Volume profile multiplier: {vol_mult:.1f}x (outside market hours)")
+    print(
+        f"Volume profile multiplier: {vol_mult:.1f}x (market time {now.strftime('%H:%M')}"
+        f", {mkt_minutes} min since open)"
+        if mkt_minutes is not None
+        else f"Volume profile multiplier: {vol_mult:.1f}x (outside market hours)"
+    )
 
     print("Generating sell strategies...")
     sell_strategies = []
@@ -373,20 +435,31 @@ def main() -> None:
     for sell in state.computed.sells:
         row = _get_row(sell.ticker)
         if row is not None:
-            quote    = watchlist_row_to_quote(row)
-            vol5min  = adv_to_vol5min(row.avg_vol_10d) * vol_mult
-            pc_label = f"prev_close=${row.prev_close:.4f}" if row.prev_close else "prev_close=N/A"
+            quote = watchlist_row_to_quote(row)
+            vol5min = adv_to_vol5min(row.avg_vol_10d) * vol_mult
+            pc_label = (
+                f"prev_close=${row.prev_close:.4f}"
+                if row.prev_close
+                else "prev_close=N/A"
+            )
             adv_label = f"adv10={row.avg_vol_10d:,}"
         else:
             # Hard fallback: use prev_close from signals.json, zero spread
             prev = state.inputs.prev_closes.get(sell.ticker, 0.0)
             from adapters import QuoteSnapshot
+
             quote = QuoteSnapshot(
-                symbol=sell.ticker, bid=prev, bid_size=0, ask=prev, ask_size=0,
-                last=prev, prev_close=prev, volume=0,
+                symbol=sell.ticker,
+                bid=prev,
+                bid_size=0,
+                ask=prev,
+                ask_size=0,
+                last=prev,
+                prev_close=prev,
+                volume=0,
                 ts=datetime.now(tz=timezone.utc),
             )
-            vol5min  = 0.0
+            vol5min = 0.0
             pc_label = f"prev_close=${prev:.4f} (signals.json)"
             adv_label = "adv10=0"
 
@@ -395,28 +468,48 @@ def main() -> None:
         sc = spread_context_for(sell.ticker, quote.bid, quote.ask)
         vwap_val = float(row.vwap) if (row is not None and row.vwap) else None
         strat, chunks = generate_sell_strategy(
-            sell, quote, l2, vol5min=vol5min, adv=adv_val,
-            spread_ctx=sc, vwap=vwap_val, market_minutes=mkt_minutes,
+            sell,
+            quote,
+            l2,
+            vol5min=vol5min,
+            adv=adv_val,
+            spread_ctx=sc,
+            vwap=vwap_val,
+            market_minutes=mkt_minutes,
         )
         if not l2.bids:
             chunks, pov_info = _rechunk_sell_pov(
-                sell, strat, adv=adv_val, spread_bps=_spread_bps(quote),
+                sell,
+                strat,
+                adv=adv_val,
+                spread_bps=_spread_bps(quote),
                 sigma_bps=vol_map.get(sell.ticker, _DAILY_SIGMA_BPS),
             )
             strat.reasoning.extend(_pov_bullets(pov_info))
         else:
-            pov_info = {"tier_label": "book_relative", "tier": 0,
-                        "n_chunks": len(chunks), "est_impact_bps": 0.0}
+            pov_info = {
+                "tier_label": "book_relative",
+                "tier": 0,
+                "n_chunks": len(chunks),
+                "est_impact_bps": 0.0,
+            }
         sell_strategies.append(strat)
         all_sell_chunks.extend(chunks)
         if pov_info.get("tier") == 4:
-            print(f"  ⚠ SELL {sell.ticker}: market-moving order "
-                  f"({pov_info['pov_pct']:.1f}% of ADV) — consider splitting across days",
-                  file=sys.stderr)
+            print(
+                f"  ⚠ SELL {sell.ticker}: market-moving order "
+                f"({pov_info['pov_pct']:.1f}% of ADV) — consider splitting across days",
+                file=sys.stderr,
+            )
         _log.debug(
             "  SELL %-6s  rule=%-28s  limit=$%.4f  %d chunk(s)  pov=%-14s  %s  %s",
-            sell.ticker, strat.rule, strat.limit_price, len(chunks),
-            pov_info.get("tier_label", "?"), pc_label, adv_label,
+            sell.ticker,
+            strat.rule,
+            strat.limit_price,
+            len(chunks),
+            pov_info.get("tier_label", "?"),
+            pc_label,
+            adv_label,
         )
 
     print("Generating buy strategies...")
@@ -425,19 +518,30 @@ def main() -> None:
     for buy in state.computed.buy_allocations:
         row = _get_row(buy.ticker)
         if row is not None:
-            quote    = watchlist_row_to_quote(row)
-            vol5min  = adv_to_vol5min(row.avg_vol_10d) * vol_mult
-            pc_label = f"prev_close=${row.prev_close:.4f}" if row.prev_close else "prev_close=N/A"
+            quote = watchlist_row_to_quote(row)
+            vol5min = adv_to_vol5min(row.avg_vol_10d) * vol_mult
+            pc_label = (
+                f"prev_close=${row.prev_close:.4f}"
+                if row.prev_close
+                else "prev_close=N/A"
+            )
             adv_label = f"adv10={row.avg_vol_10d:,}"
         else:
             prev = state.inputs.prev_closes.get(buy.ticker, 0.0)
             from adapters import QuoteSnapshot
+
             quote = QuoteSnapshot(
-                symbol=buy.ticker, bid=prev, bid_size=0, ask=prev, ask_size=0,
-                last=prev, prev_close=prev, volume=0,
+                symbol=buy.ticker,
+                bid=prev,
+                bid_size=0,
+                ask=prev,
+                ask_size=0,
+                last=prev,
+                prev_close=prev,
+                volume=0,
                 ts=datetime.now(tz=timezone.utc),
             )
-            vol5min  = 0.0
+            vol5min = 0.0
             pc_label = f"prev_close=${prev:.4f} (signals.json)"
             adv_label = "adv10=0"
 
@@ -446,42 +550,66 @@ def main() -> None:
         sc = spread_context_for(buy.ticker, quote.bid, quote.ask)
         vwap_val = float(row.vwap) if (row is not None and row.vwap) else None
         strat, chunks = generate_buy_strategy(
-            buy, quote, l2, vol5min=vol5min, adv=adv_val,
-            spread_ctx=sc, vwap=vwap_val, market_minutes=mkt_minutes,
+            buy,
+            quote,
+            l2,
+            vol5min=vol5min,
+            adv=adv_val,
+            spread_ctx=sc,
+            vwap=vwap_val,
+            market_minutes=mkt_minutes,
         )
         if not l2.asks:
             chunks, pov_info = _rechunk_buy_pov(
-                buy, strat, adv=adv_val, spread_bps=_spread_bps(quote),
+                buy,
+                strat,
+                adv=adv_val,
+                spread_bps=_spread_bps(quote),
                 sigma_bps=vol_map.get(buy.ticker, _DAILY_SIGMA_BPS),
             )
             strat.reasoning.extend(_pov_bullets(pov_info))
         else:
-            pov_info = {"tier_label": "book_relative", "tier": 0,
-                        "n_chunks": len(chunks), "est_impact_bps": 0.0}
+            pov_info = {
+                "tier_label": "book_relative",
+                "tier": 0,
+                "n_chunks": len(chunks),
+                "est_impact_bps": 0.0,
+            }
         buy_strategies.append(strat)
         all_buy_chunks.extend(chunks)
         if pov_info.get("tier") == 4:
-            print(f"  ⚠ BUY  {buy.ticker}: market-moving order "
-                  f"({pov_info['pov_pct']:.1f}% of ADV) — consider splitting across days",
-                  file=sys.stderr)
+            print(
+                f"  ⚠ BUY  {buy.ticker}: market-moving order "
+                f"({pov_info['pov_pct']:.1f}% of ADV) — consider splitting across days",
+                file=sys.stderr,
+            )
         _log.debug(
             "  BUY  %-6s  rule=%-28s  limit=$%.4f  %d chunk(s)  pov=%-14s  %s  %s",
-            buy.ticker, strat.rule, strat.limit_price, len(chunks),
-            pov_info.get("tier_label", "?"), pc_label, adv_label,
+            buy.ticker,
+            strat.rule,
+            strat.limit_price,
+            len(chunks),
+            pov_info.get("tier_label", "?"),
+            pc_label,
+            adv_label,
         )
 
     # Per-ticker chunk ordering: largest chunk first (except gap_capture which has phase order)
     gap_tickers = {s.ticker for s in sell_strategies if s.rule == "gap_capture"}
-    all_sell_chunks = _reorder_chunks_largest_first(all_sell_chunks, skip_tickers=gap_tickers)
+    all_sell_chunks = _reorder_chunks_largest_first(
+        all_sell_chunks, skip_tickers=gap_tickers
+    )
     all_buy_chunks = _reorder_chunks_largest_first(all_buy_chunks)
 
     state.computed.sell_strategies = sell_strategies
-    state.computed.buy_strategies  = buy_strategies
-    state.computed.sell_chunks     = all_sell_chunks
-    state.computed.buy_chunks      = all_buy_chunks
+    state.computed.buy_strategies = buy_strategies
+    state.computed.sell_chunks = all_sell_chunks
+    state.computed.buy_chunks = all_buy_chunks
 
     save_state(state, resolve_output_path(args.export))
-    print(f"Wrote {args.export}  ({len(sell_strategies)} sell, {len(buy_strategies)} buy strategies)")
+    print(
+        f"Wrote {args.export}  ({len(sell_strategies)} sell, {len(buy_strategies)} buy strategies)"
+    )
 
 
 if __name__ == "__main__":

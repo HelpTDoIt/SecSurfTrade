@@ -124,7 +124,7 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
   "inputs": {
     "accounts": [
       {
-        "name": "Roth IRA",
+        "name": "My Retirement",
         "type": "retirement",
         "cash_reserve": 0,
         "positions": [
@@ -138,15 +138,15 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
         ],
         "cash_spaxx": 33.88,
         "strategy_allocations": {
-          "Prismatic Prudence": 0.2,
+          "Strategy Alpha": 0.2,
           "World Try -Top": 0.25
         }
       }
     ],
     "signals": [
       {
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "account": "My Retirement",
+        "strategy": "Strategy Alpha",
         "current_ticker": "EEM",
         "new_ticker": "EWY"
       }
@@ -167,8 +167,8 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
     "one_share_total": 412.83,
     "sells": [
       {
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "account": "My Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EEM",
         "shares": 1655.0,
         "limit_price_basis": "prev_close",
@@ -177,8 +177,8 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
     ],
     "buy_allocations": [
       {
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "account": "My Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EWY",
         "dollar_target": 99889.88,
         "share_target": 1315
@@ -200,7 +200,7 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
         "last_progress_at": "2026-04-30T09:48:11-04:00"
       }
     ],
-    "actual_proceeds_by_account": { "Roth IRA": 49912.0 }
+    "actual_proceeds_by_account": { "My Retirement": 49912.0 }
   }
 }
 ```

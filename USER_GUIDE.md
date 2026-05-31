@@ -59,10 +59,10 @@ Each account entry requires a `csvSlot` field (`"roth"`, `"rollover"`, or `"tod"
 
 ```json
 {
-  "Roth IRA": {
+  "My Retirement Account": {
     "csvSlot": "roth",
     "type": "retirement",
-    "strategies": { "Strategy A": 0.25, "Strategy B": 0.75 },
+    "strategies": { "Strategy Alpha": 0.25, "Strategy Beta": 0.75 },
     "cashReserve": 0
   }
 }
@@ -72,7 +72,7 @@ Account names must match the **Account Name** field in your Fidelity CSV headers
 
 ### Strategy name mapping configured
 
-SectorSurfer portal strategy names (e.g. "YE25: Prismatic Prudence + frdm - js") differ from the short names used in the engine and `accounts.json`. The mapping lives in **`strategy_map.json`** (gitignored — never committed):
+SectorSurfer portal strategy names (e.g. "YE25: Strategy Alpha + frdm - js") differ from the short names used in the engine and `accounts.json`. The mapping lives in **`strategy_map.json`** (gitignored — never committed):
 
 ```powershell
 Copy-Item strategy_map.example.json strategy_map.json

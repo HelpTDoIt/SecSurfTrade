@@ -5,6 +5,7 @@ with synthetic sell and buy strategies for TUI presenter tests.
 Run from fidelity_rebalancer/:
     python scripts/gen_strategies_fixture.py
 """
+
 from __future__ import annotations
 
 import json
@@ -29,34 +30,40 @@ from state.schema import (
     SignalInput,
 )
 
-FIXTURE_PATH = Path(__file__).parent.parent / "tests" / "fixtures" / "feb27_with_strategies.json"
+FIXTURE_PATH = (
+    Path(__file__).parent.parent / "tests" / "fixtures" / "feb27_with_strategies.json"
+)
 
 
 def main() -> None:
     inputs = Inputs(
         accounts=[
             AccountInput(
-                name="Roth IRA",
+                name="Test Retirement",
                 type="retirement",
                 cash_reserve=0.0,
                 positions=[
-                    PositionInput(symbol="EEM", quantity=200.0, price=62.71, value=12542.0),
-                    PositionInput(symbol="SPAXX**", quantity=100.0, price=1.0, value=100.0),
+                    PositionInput(
+                        symbol="EEM", quantity=200.0, price=62.71, value=12542.0
+                    ),
+                    PositionInput(
+                        symbol="SPAXX**", quantity=100.0, price=1.0, value=100.0
+                    ),
                 ],
                 cash_spaxx=100.0,
-                strategy_allocations={"Prismatic Prudence": 0.20, "SPDR Respectable": 0.30},
+                strategy_allocations={"Strategy Alpha": 0.20, "Strategy Beta": 0.30},
             )
         ],
         signals=[
             SignalInput(
-                account="Roth IRA",
-                strategy="Prismatic Prudence",
+                account="Test Retirement",
+                strategy="Strategy Alpha",
                 current_ticker="EEM",
                 new_ticker="EWY",
             ),
             SignalInput(
-                account="Roth IRA",
-                strategy="SPDR Respectable",
+                account="Test Retirement",
+                strategy="Strategy Beta",
                 current_ticker="SMH",
                 new_ticker="SMH",
             ),
@@ -67,8 +74,8 @@ def main() -> None:
 
     sells = [
         SellRecord(
-            account="Roth IRA",
-            strategy="Prismatic Prudence",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
             ticker="EEM",
             shares=200.0,
             limit_price=62.39,
@@ -78,8 +85,8 @@ def main() -> None:
     ]
     buys = [
         BuyAllocationRecord(
-            account="Roth IRA",
-            strategy="Prismatic Prudence",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
             ticker="EWY",
             dollar_target=12000.0,
             limit_price=75.50,
@@ -89,8 +96,8 @@ def main() -> None:
             target_value=12000.0,
         ),
         BuyAllocationRecord(
-            account="Roth IRA",
-            strategy="SPDR Respectable",
+            account="Test Retirement",
+            strategy="Strategy Beta",
             ticker="SMH",
             dollar_target=5000.0,
             limit_price=200.10,
@@ -102,9 +109,9 @@ def main() -> None:
     ]
     sell_chunks = [
         ChunkRecord(
-            chunk_id="s_Roth_IRA_EEM_0",
-            account="Roth IRA",
-            strategy="Prismatic Prudence",
+            chunk_id="s_Test_Retirement_EEM_0",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
             ticker="EEM",
             idx=0,
             shares=100.0,
@@ -112,9 +119,9 @@ def main() -> None:
             cost=6239.0,
         ),
         ChunkRecord(
-            chunk_id="s_Roth_IRA_EEM_1",
-            account="Roth IRA",
-            strategy="Prismatic Prudence",
+            chunk_id="s_Test_Retirement_EEM_1",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
             ticker="EEM",
             idx=1,
             shares=100.0,
@@ -124,9 +131,9 @@ def main() -> None:
     ]
     buy_chunks = [
         ChunkRecord(
-            chunk_id="b_Roth_IRA_EWY_0",
-            account="Roth IRA",
-            strategy="Prismatic Prudence",
+            chunk_id="b_Test_Retirement_EWY_0",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
             ticker="EWY",
             idx=0,
             shares=100.0,
@@ -134,9 +141,9 @@ def main() -> None:
             cost=7550.0,
         ),
         ChunkRecord(
-            chunk_id="b_Roth_IRA_EWY_1",
-            account="Roth IRA",
-            strategy="Prismatic Prudence",
+            chunk_id="b_Test_Retirement_EWY_1",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
             ticker="EWY",
             idx=1,
             shares=58.0,
@@ -144,9 +151,9 @@ def main() -> None:
             cost=4379.0,
         ),
         ChunkRecord(
-            chunk_id="b_Roth_IRA_SMH_0",
-            account="Roth IRA",
-            strategy="SPDR Respectable",
+            chunk_id="b_Test_Retirement_SMH_0",
+            account="Test Retirement",
+            strategy="Strategy Beta",
             ticker="SMH",
             idx=0,
             shares=24.0,
@@ -156,8 +163,8 @@ def main() -> None:
     ]
     sell_strategies = [
         SellStrategy(
-            account="Roth IRA",
-            strategy="Prismatic Prudence",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
             ticker="EEM",
             order_type="LIMIT",
             limit_price=62.39,
@@ -169,13 +176,13 @@ def main() -> None:
                 "Session volume is 1.20× ADV.",
                 "LIMIT at midpoint $62.3900.",
             ],
-            chunk_ids=["s_Roth_IRA_EEM_0", "s_Roth_IRA_EEM_1"],
+            chunk_ids=["s_Test_Retirement_EEM_0", "s_Test_Retirement_EEM_1"],
         )
     ]
     buy_strategies = [
         BuyStrategy(
-            account="Roth IRA",
-            strategy="Prismatic Prudence",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
             ticker="EWY",
             order_type="LIMIT",
             limit_price=75.50,
@@ -187,11 +194,11 @@ def main() -> None:
                 "Order is 0.16% of 30-day ADV (158 sh).",
                 "LIMIT at ask $75.5000 — likely to fill quickly.",
             ],
-            chunk_ids=["b_Roth_IRA_EWY_0", "b_Roth_IRA_EWY_1"],
+            chunk_ids=["b_Test_Retirement_EWY_0", "b_Test_Retirement_EWY_1"],
         ),
         BuyStrategy(
-            account="Roth IRA",
-            strategy="SPDR Respectable",
+            account="Test Retirement",
+            strategy="Strategy Beta",
             ticker="SMH",
             order_type="LIMIT",
             limit_price=200.10,
@@ -203,12 +210,12 @@ def main() -> None:
                 "LIMIT at midpoint $200.1000.",
                 "Order is 0.24% of 30-day ADV (24 sh).",
             ],
-            chunk_ids=["b_Roth_IRA_SMH_0"],
+            chunk_ids=["b_Test_Retirement_SMH_0"],
         ),
     ]
     computed = Computed(
-        cash_ok={"Roth IRA": True},
-        one_share_total={"Roth IRA": 338.0},
+        cash_ok={"Test Retirement": True},
+        one_share_total={"Test Retirement": 338.0},
         sells=sells,
         buy_allocations=buys,
         sell_chunks=sell_chunks,
