@@ -42,6 +42,17 @@ from engine.strategy_sell import generate_sell_strategy
 from state.importer import load_state, save_state
 from state.schema import ChunkRecord
 
+# Strict-ATP contract: when --strict-atp is set and live FT+ OCR is incomplete
+# (any watchlist ticker missing OR any L2 fetch failing), the CLI stops instead
+# of silently falling back to yfinance / empty books. The orchestrator keys off
+# this exact exit code and stderr marker to pause for human confirmation.
+OCR_SHORTFALL_EXIT = 3
+OCR_SHORTFALL_MARKER = "OCR_SHORTFALL"
+
+
+class OCRShortfall(Exception):
+    """Raised in strict-atp mode when live FT+ OCR data is incomplete."""
+
 
 def _realized_vol_bps(symbol: str, lookback: int = 20) -> float:
     """
@@ -68,8 +79,14 @@ def _realized_vol_bps(symbol: str, lookback: int = 20) -> float:
         return _DAILY_SIGMA_BPS
 
 
-def _fetch_watchlist(symbols: list[str], source: str) -> dict[str, WatchlistRow]:
-    """Return WatchlistRow for each symbol from the selected source."""
+def _fetch_watchlist(
+    symbols: list[str], source: str, strict: bool = False
+) -> dict[str, WatchlistRow]:
+    """Return WatchlistRow for each symbol from the selected source.
+
+    In strict-atp mode, any watchlist ticker missing from the OCR read raises
+    OCRShortfall instead of silently falling back to yfinance.
+    """
     if source == "atp":
         from adapters.atp_watchlist import ATPWatchlistAdapter
 
@@ -77,6 +94,8 @@ def _fetch_watchlist(symbols: list[str], source: str) -> dict[str, WatchlistRow]
         rows = ATPWatchlistAdapter().get_watchlist()
         missing = [s for s in symbols if s not in rows]
         if missing:
+            if strict:
+                raise OCRShortfall(f"watchlist_missing={missing}")
             print(
                 f"  Warning: {missing} not found in Watchlist OCR — "
                 "falling back to yfinance for missing tickers",
@@ -328,6 +347,13 @@ def main() -> None:
         "Adjusts buy budgets proportionally vs estimated proceeds.",
     )
     parser.add_argument(
+        "--strict-atp",
+        action="store_true",
+        help="With --source atp: stop (exit 3) instead of silently falling back "
+        "if any watchlist ticker is missing OR any L2 fetch fails. Used by the "
+        "morning preflight to pause for human confirmation before fallback.",
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -357,7 +383,11 @@ def main() -> None:
     )
 
     # Batch-fetch market data once for all tickers
-    watchlist = _fetch_watchlist(all_tickers, args.source)
+    try:
+        watchlist = _fetch_watchlist(all_tickers, args.source, strict=args.strict_atp)
+    except OCRShortfall as exc:
+        print(f"{OCR_SHORTFALL_MARKER}: {exc}", file=sys.stderr)
+        sys.exit(OCR_SHORTFALL_EXIT)
 
     # Per-symbol realized volatility for impact model
     print(f"Computing realized volatility for {len(all_tickers)} ticker(s)...")
@@ -395,6 +425,7 @@ def main() -> None:
 
         l2_adapter = OCRLevel2Adapter()
         print(f"Fetching Level 2 depth for {sorted(l2_symbols)}...")
+        l2_failed: list[str] = []
         for sym in sorted(l2_symbols):
             try:
                 l2_cache[sym] = l2_adapter.get_level2(sym)
@@ -403,6 +434,10 @@ def main() -> None:
                 print(f"  {sym:6s}  L2 OK ({n_bids} bids, {n_asks} asks)")
             except Exception as exc:
                 print(f"  {sym:6s}  L2 FAILED: {exc}", file=sys.stderr)
+                l2_failed.append(sym)
+        if args.strict_atp and l2_failed:
+            print(f"{OCR_SHORTFALL_MARKER}: l2_failed={l2_failed}", file=sys.stderr)
+            sys.exit(OCR_SHORTFALL_EXIT)
 
     def _get_l2(ticker: str) -> Level2Snapshot:
         return l2_cache.get(ticker) or _empty_l2(ticker)
