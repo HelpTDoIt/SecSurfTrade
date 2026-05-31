@@ -24,13 +24,13 @@ c = c.replace(
 # 3. T-1.1 PASS: add daily-bps note and fix sigma notation
 c = c.replace(
     "**PASS:**\n"
-    "- [ ] At least 80% of tickers show non-default sigma (not \"100 bps (default)\")\n"
+    '- [ ] At least 80% of tickers show non-default sigma (not "100 bps (default)")\n'
     "- [ ] Leveraged ETFs (DFEN, BULZ, TQQQ, etc.) show σ > 300 bps\n"
     "- [ ] Large-cap ETFs (SPY, QQQ, EEM) show σ between 80–250 bps\n"
     "\n"
     "### T-1.2:",
     "**PASS:** (sigma values are **daily** bps: 100 bps = 1% daily vol)\n"
-    "- [ ] At least 80% of tickers show non-default sigma (not \"100 bps (default)\")\n"
+    '- [ ] At least 80% of tickers show non-default sigma (not "100 bps (default)")\n'
     "- [ ] Leveraged ETFs (DFEN, BULZ, TQQQ, etc.) show sigma > 300 bps\n"
     "- [ ] Large-cap ETFs (SPY, QQQ, EEM) show sigma between 80-250 bps\n"
     "\n"
@@ -87,7 +87,7 @@ else:
     print(f"test_plan patched: {orig} -> {len(c)} chars")
 
 # ── USER_GUIDE.md ────────────────────────────────────────────────────────────
-ug = r"C:\Users\Jason\Documents\Code\SecSurfTrade\fidelity_rebalancer\USER_GUIDE.md"
+ug = r"C:\Users\Jason\Documents\Code\SecSurfTrade\USER_GUIDE.md"
 with open(ug, encoding="utf-8") as f:
     c = f.read()
 
@@ -104,11 +104,7 @@ c = c.replace(
 
 # 3. Add sigma note to cli.strategy description
 c = c.replace(
-    "**Options:**\n"
-    "\n"
-    "| Flag | Default | Description |\n"
-    "|---|---|---|\n"
-    "| `--state`",
+    "**Options:**\n\n| Flag | Default | Description |\n|---|---|---|\n| `--state`",
     "Terminal output includes a realized-volatility block (`sigma=N bps`, daily units: 100 bps = 1% daily vol) "
     "and a thin-ticker block if any order exceeds 3% of ADV.\n"
     "\n"

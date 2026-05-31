@@ -4,7 +4,7 @@
     CSVs, compute trade plan, start servers, open calculator with auto-import.
 
 .DESCRIPTION
-    Replaces the 5-step Section 3 "Daily Workflow" in USER_GUIDE.md with a
+    Replaces the 5-step Section 3 "Daily Workflow" in USER_GUIDE.md (repo root) with a
     single command.  Sequence:
       1. Scrape SectorSurfer signals  (prompts to reuse if file is fresh)
       2. Validate accounts.json + signals.json
