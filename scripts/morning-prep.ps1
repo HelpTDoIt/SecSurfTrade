@@ -10,9 +10,11 @@
       2. Validate accounts.json + signals.json
       3. Wait for today's Fidelity CSVs in Downloads
       4. Run cli.compute -> state.json
-      5. Start Yahoo proxy / static server (run.ps1 -NoLaunch) if not running
-      6. Open calculator in Chrome with ?import=state.json
-      7. Print summary
+      5. Order-sizing preflight (opt-in): FT+ readiness gate -> cli.strategy
+         sizing -> sanity gate -> next steps (cli.preflight)
+      6. Start Yahoo proxy / static server (run.ps1 -NoLaunch) if not running
+      7. Open calculator in Chrome with ?import=state.json
+      8. Print summary
 
 .EXAMPLE
     .\scripts\morning-prep.ps1
@@ -127,9 +129,36 @@ try {
 }
 Write-Pass "state.json written: $StateFile"
 
-# -- Step 5: Start Yahoo proxy / static server if not running -----------------
+# -- Step 5: Order-sizing preflight (opt-in) ----------------------------------
 
-Write-Step 5 "Yahoo Finance proxy + static server"
+Write-Step 5 "Order-sizing preflight (FT+ readiness -> sizing -> sanity gate)"
+Write-Host "      Requires Fidelity Trader+ open with the Watchlist + L2 windows." -ForegroundColor DarkGray
+$runPreflight = Read-Host "      Run order-sizing preflight now? [Y/n]"
+if ($runPreflight -notmatch "^[nN]") {
+    $prevPYTHONPATH = $env:PYTHONPATH
+    $env:PYTHONPATH = $FRDir
+    Push-Location $FRDir
+    try {
+        & python -m cli.preflight --state $StateFile
+        $preflightExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+        $env:PYTHONPATH = $prevPYTHONPATH
+    }
+    if ($preflightExit -eq 0) {
+        Write-Pass "Preflight complete - state sized and sanity-checked."
+    } else {
+        # Non-zero = user abort or RED sanity gate. Don't trade on it, but let
+        # morning-prep finish so the calculator path stays available.
+        Write-Warn "Preflight exited $preflightExit (aborted or RED gate). Review before entering orders."
+    }
+} else {
+    Write-Warn "Skipped order-sizing preflight. Size orders before trading."
+}
+
+# -- Step 6: Start Yahoo proxy / static server if not running -----------------
+
+Write-Step 6 "Yahoo Finance proxy + static server"
 
 
 # Evict any stale Python processes holding our ports from previous runs.
@@ -188,7 +217,7 @@ if ($proxyRunning) {
     Write-Pass "Proxy + static server running (port $ProxyPort / $Port)"
 }
 
-# -- Step 6: Summary -----------------------------------------------------------
+# -- Step 7: Summary -----------------------------------------------------------
 
 Write-Host ""
 Write-Host "  ============================================" -ForegroundColor DarkGray
