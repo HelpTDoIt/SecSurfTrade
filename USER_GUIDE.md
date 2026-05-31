@@ -141,7 +141,7 @@ Then run the scraper — it will open a browser window and wait for you to log i
 cd fidelity_rebalancer
 $env:PYTHONPATH = "."
 python -m pytest tests/ -q
-# Expected: 182 passed
+# Expected: 289 passed
 ```
 
 ---
@@ -156,23 +156,32 @@ DAY BEFORE TRADING:
 TRADING MORNING (pre-market):
   3. Run morning-prep.ps1 — validates config, runs scraper, opens calculator
      (Or manually: download 3 Fidelity CSVs, run cli.compute → state.json)
-  4. Open React calculator → Import State → review Trades tab
+  4. Run scripts/validate_config.py to catch config errors before trading
+  5. Run cli.preflight --state state.json — interactive readiness gate:
+     • Confirms FT+ is running with every needed ticker in the Watchlist
+       and an L2 window open for each thin ticker (7-window cap)
+     • Sizes the orders from live FT+ data (pauses for explicit 'yes' before
+       any yfinance fallback that sizes without live L2 depth)
+     • Runs the pre-trade sanity gate (RED blocks, YELLOW pauses, GREEN proceeds)
+  6. Open React calculator → Import State → review Trades tab
      (Alternatively: load CSVs in Setup tab, enter signals, Calculate)
-  5. Run scripts/validate_config.py to catch config errors before trading
 
 MARKET OPEN:
-  6. Use Entry tab in React calculator to enter orders in FT+
+  7. Use Entry tab in React calculator to enter orders in FT+
      • Sell Round 1 → enter all first-chunk sells across all accounts
      • Check for fills, then Sell Round 2 (if any)
      • Buy Round 1 → enter all first-chunk buys (IRAs: wait for sell proceeds)
      • Repeat for subsequent buy rounds
 
 DURING TRADING:
-  7. Log fills in the Trades tab as orders execute
+  8. Log fills in the Trades tab as orders execute
+     (Optional: cli.progress --state state.json flags buys behind schedule)
 
 END OF DAY:
-  8. Review Allocation tab — confirm drift is within tolerance
+  9. Review Allocation tab — confirm drift is within tolerance
      Export State for records if needed
+ 10. Run cli.eod_report — formats the session's journal log into a
+     post-session summary (event tally, notable-events timeline, poll errors)
 ```
 
 ---
@@ -438,6 +447,29 @@ python scripts/atp_smoke.py TICKER
 python scripts/atp_smoke.py --skip-l2 TICKER
 ```
 
+### `cli.preflight`
+
+Interactive morning readiness gate + order-sizing walkthrough. Runs **after** `cli.compute` has produced `state.json` and **before** you enter orders. This is the recommended pre-market command once FT+ is open.
+
+```powershell
+python -m cli.preflight --state state.json
+```
+
+Three steps, all interactive:
+
+1. **Readiness gate** (loops until GREEN) — confirms Fidelity Trader+ is running, reads the Watchlist via OCR, builds an L2-window plan for thin tickers against the window cap, and verifies every needed ticker is in the Watchlist and every thin ticker has an L2 window. If anything is missing it prints exactly what to add in FT+ and waits for you to press Enter to re-check.
+2. **Order sizing** — runs `cli.strategy --source atp --strict-atp` with auto L2 detection. On an OCR shortfall it **pauses** and makes you choose `[R]etry / [Y]es-fall-back-to-yfinance / [A]bort`. The yfinance fallback sizes _without_ live L2 depth and only happens after you type `yes` to confirm — there is **no silent auto-fallback**.
+3. **Pre-trade sanity gate** — RED findings block (exit 2), YELLOW findings pause for confirmation, GREEN proceeds. Then it spoonfeeds the exact next steps through to manual order entry.
+
+**Options:**
+
+| Flag                   | Default  | Description                                                              |
+| ---------------------- | -------- | ------------------------------------------------------------------------ |
+| `--state`              | required | State JSON from `cli.compute` (sized in place)                           |
+| `--cap`                | `7`      | Max L2 windows available in FT+                                          |
+| `--adv-pct`            | `10.0`   | Flag a chunk as oversized when it exceeds this %% of 10-day ADV          |
+| `--confirmed-proceeds` | none     | Passed through to `cli.strategy` (actual sell proceeds per account JSON) |
+
 ### `cli.compare`
 
 Compares engine state (from `cli.compute`) against React calculator export (from ⬇ Export State). Used for parity validation.
@@ -447,6 +479,33 @@ python -m cli.compare --engine state.json --calc calc_export_YYYYMMDD_HHMM.json
 ```
 
 Green `✓` = match. Red `✗` = discrepancy with exact diff. Zero red lines = engine and React calc agree on all trades and chunk sizes.
+
+### `cli.progress`
+
+Portfolio-level buy progress tracker. Compares buy fill completion (filled shares / target shares) against elapsed trading time and flags buys that are behind schedule. Run it during trading to see whether your buys are keeping pace with the day.
+
+```powershell
+python -m cli.progress --state state.json
+```
+
+Prints the trading-day percentage elapsed, portfolio buy completion, and a per-buy table marking any buy that is behind schedule (less than half the time-elapsed pace). Read-only — never places orders.
+
+### `cli.eod_report`
+
+End-of-day trade-journal report. Reads the append-only JSONL audit log(s) written by the live monitor (`logs/journal*.jsonl`) and prints a human-readable post-session summary. This tool **never** places trades — it only reads logs.
+
+```powershell
+python -m cli.eod_report
+python -m cli.eod_report --journal logs/journal_e2e_demo.jsonl
+```
+
+The report includes the session span (start/end/duration in local time), an event tally, a chronological **notable-events timeline** (everything except routine `heartbeat`/`poll` noise — including any unknown or newly-introduced event type, so nothing silently vanishes), and a poll-error warnings section. Malformed lines are skipped and counted; unreadable files are reported distinctly.
+
+**Options:**
+
+| Flag        | Default               | Description                                                                                                     |
+| ----------- | --------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `--journal` | `logs/journal*.jsonl` | Glob or explicit path to journal JSONL file(s). Resolved relative to `fidelity_rebalancer/` if not found as-is. |
 
 ### `scripts/sectorsurfer_signals.py`
 
@@ -556,4 +615,4 @@ The Playwright Chromium window opens on every scraper run and closes when done. 
 | `run.ps1` exits with "pip install failed"                         | No internet or corporate proxy                                 | Run `pip install -e fidelity_rebalancer` manually from a network that allows PyPI                                                                                                                                                                                       |
 | `run.ps1` exits with "Chromium install failed"                    | Disk space or proxy issue                                      | Run `python -m playwright install chromium` manually                                                                                                                                                                                                                    |
 | `ModuleNotFoundError` on any Python module                        | Package not installed                                          | Re-run `.\run.ps1` — it installs missing packages automatically                                                                                                                                                                                                         |
-| Tests fail / unexpected failures                                  | Dependencies out of sync                                       | `pip install -e "fidelity_rebalancer/[dev]"` and re-run; expected: 182 passed                                                                                                                                                                                           |
+| Tests fail / unexpected failures                                  | Dependencies out of sync                                       | `pip install -e "fidelity_rebalancer/[dev]"` and re-run; expected: 289 passed                                                                                                                                                                                           |

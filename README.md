@@ -13,6 +13,8 @@ Pulls SectorSurfer signals, reads Fidelity position CSVs, computes the exact sel
 - **Computes trade plans** — sells, buys, and ≤$100K execution chunks — matching your strategy allocations
 - **React calculator** — browser-based UI for reviewing trades, logging fills, and tracking allocation drift
 - **OCR adapters** — reads live bid/ask/L2 from Fidelity Trader+ via screen capture for limit price generation
+- **Morning preflight** — interactive readiness gate that confirms FT+ has every needed ticker (Watchlist + L2 windows) before sizing, then runs a pre-trade sanity gate
+- **EOD report** — formats the session's journal audit log into a post-session summary
 - **Parity check** — validates engine output against the React calculator's computed trades
 
 ---
@@ -74,10 +76,11 @@ SecSurfTrade/
     ├── engine/                     #   pure calculation logic (no I/O)
     ├── adapters/                   #   ATP OCR readers, CSV importer, mock ATP
     ├── state/                      #   Pydantic schema, state import/export, parity diff
+    ├── preflight/                  #   readiness checks, L2-window planner, sanity gate, orchestrator
     ├── tui/                        #   Textual terminal UI (order approval, live monitor)
-    ├── cli/                        #   CLI entry points (compute, strategy, compare)
+    ├── cli/                        #   CLI entry points (compute, strategy, preflight, compare, progress, eod_report)
     ├── scripts/                    #   dev/diagnostic utilities (not part of daily workflow)
-    └── tests/                      #   182 unit tests + fixtures
+    └── tests/                      #   289 unit tests + fixtures
 ```
 
 ---
@@ -102,5 +105,5 @@ This repository is safe to make public. Sensitive data is kept out of the repo b
 cd fidelity_rebalancer
 $env:PYTHONPATH = "."
 python -m pytest tests/ -q
-# Expected: 182 passed
+# Expected: 289 passed
 ```

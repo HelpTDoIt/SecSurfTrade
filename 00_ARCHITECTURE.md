@@ -86,9 +86,17 @@ fidelity_rebalancer/
 │   ├── app.py                  # Textual entry point
 │   ├── presenter.py            # plan approval screens
 │   └── monitor.py              # live order monitor view + stall alerts
+├── preflight/                  # morning readiness gate (pure decision logic + interactive shell)
+│   ├── checks.py               # FT+-running + ticker-presence (Watchlist / L2) checks
+│   ├── planner.py              # L2-window plan for thin tickers against the window cap
+│   ├── sanity.py               # pre-trade sanity findings (RED / YELLOW / GREEN)
+│   └── orchestrator.py         # readiness evaluation, sizing-command builder, outcome classifier
 ├── cli/
 │   ├── compute.py              # python -m cli.compute --inputs ... --export state.json
 │   ├── strategy.py             # python -m cli.strategy --state state.json --export state.json
+│   ├── preflight.py            # python -m cli.preflight --state state.json (readiness -> sizing -> sanity)
+│   ├── progress.py             # python -m cli.progress --state state.json (buy fill vs. time-elapsed pace)
+│   ├── eod_report.py           # python -m cli.eod_report --journal logs/journal*.jsonl (post-session summary)
 │   └── compare.py              # python -m cli.compare --engine state.json --calc calc_export.json
 │                               #   --engine: path to engine output JSON (from cli.compute)
 │                               #   --calc:   path to React calc export JSON (from Export State button)
@@ -298,7 +306,6 @@ Recommended execution order: **1 → 2 → 3 → 4 → 5 → 6**. If you have a 
 - React calculator **Import** State button — built; restores positions/signals/closes from a state JSON
 - Live bidirectional sync between engine and React calc (re-export to checkpoint)
 - Account-level kill-switch hotkey (no orders being placed by the app)
-- Formatted post-session trade journal reports (events are logged but not formatted)
 - Positions scraping from ATP (CSV import is the source of truth today)
 - Phase B order pre-fill — even though the architecture supports it, no execution adapter beyond "print to terminal" is built today
 
@@ -332,3 +339,11 @@ All six chunks are complete. The parity gate in the Definition of Done is now un
 3. Iterate engine until zero diffs. Once clean, the engine is the source of truth.
 
 **Import State** (`rebalance_calculator.html` → Setup tab → Import State button) loads a previously exported state JSON back into the calculator — restoring positions, signals, and prev closes — so you can resume a session or cross-check without re-entering CSV data.
+
+### Daily-workflow tooling added on top of the six chunks
+
+Built after the original chunks, these wrap the engine in a guided trading-day flow (all read-only — the app still never places orders):
+
+- **Morning preflight** (`preflight/` package + `cli.preflight`) — an interactive pre-market readiness gate. It confirms Fidelity Trader+ is running with every needed ticker in the Watchlist and an L2 window open for each thin ticker (against the FT+ window cap), then sizes the orders from live FT+ data. On an OCR shortfall it pauses and requires an explicit `yes` before any yfinance fallback that sizes without live L2 depth — there is no silent auto-fallback. It finishes with the pre-trade sanity gate (RED blocks, YELLOW pauses, GREEN proceeds). Decision logic lives in `preflight.checks` / `.planner` / `.sanity` / `.orchestrator` (unit-tested); `cli.preflight` is the thin interactive shell.
+- **Buy progress tracker** (`cli.progress`) — compares buy fill completion against elapsed trading time and flags buys behind schedule.
+- **EOD trade-journal report** (`cli.eod_report`) — formats the append-only `logs/journal*.jsonl` audit log into a post-session summary (session span in local time, event tally, notable-events timeline, poll-error warnings). Schema-tolerant: it skips and counts malformed lines, reports unreadable files distinctly, and surfaces unknown/future event types rather than dropping them.
