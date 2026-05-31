@@ -24,15 +24,12 @@ sys.path.insert(0, str(_ROOT))
 
 from cli import resolve_path
 
-# Event types that appear in the notable-events timeline
-_NOTABLE = {
-    "stall_detected",
-    "stall_ignored",
-    "requote_suggested",
-    "requote_confirmed",
-    "recompute_trigger",
-    "poll_error",
-}
+# High-frequency routine events EXCLUDED from the notable-events timeline.
+# Everything else -- including unknown / future event types -- is treated as
+# notable, so a newly-introduced event type can never silently vanish from the
+# timeline (the journal schema has drifted before; e.g. requote_suggested was
+# not in the monitor source yet showed up in real logs).
+_ROUTINE = {"heartbeat", "poll"}
 
 
 # ---------------------------------------------------------------------------
@@ -40,23 +37,28 @@ _NOTABLE = {
 # ---------------------------------------------------------------------------
 
 
-def load_journal(paths: list[str]) -> tuple[list[dict], int]:
+def load_journal(paths: list[str]) -> tuple[list[dict], int, list[str]]:
     """
-    Read one or more JSONL files and return (entries, n_malformed).
+    Read one or more JSONL files and return (entries, n_malformed, unreadable).
 
     entries  -- list of dicts, each {"ts": str, "event_type": str, "payload": dict},
-                sorted ascending by ts string (ISO-8601 lexicographic sort is safe).
-    n_malformed -- count of lines that could not be parsed as JSON or were
+                sorted ascending by ts string (ISO-8601 lexicographic sort is safe
+                as long as every record uses the same timezone offset, which the
+                monitor guarantees by writing UTC).
+    n_malformed -- count of LINES that could not be parsed as JSON or were
                    missing required keys.
+    unreadable  -- paths of FILES that could not be opened at all (distinct from
+                   a bad line inside an otherwise-readable file).
     """
     entries: list[dict] = []
     n_malformed = 0
+    unreadable: list[str] = []
 
     for path in paths:
         try:
             text = Path(path).read_text(encoding="utf-8")
         except OSError:
-            n_malformed += 1
+            unreadable.append(path)
             continue
 
         for raw_line in text.splitlines():
@@ -75,7 +77,7 @@ def load_journal(paths: list[str]) -> tuple[list[dict], int]:
                 n_malformed += 1
 
     entries.sort(key=lambda e: e.get("ts", ""))
-    return entries, n_malformed
+    return entries, n_malformed, unreadable
 
 
 @dataclass
@@ -86,7 +88,7 @@ class JournalSummary:
     event_counts: dict[str, int] = field(default_factory=dict)
     notable_events: list[dict] = field(
         default_factory=list
-    )  # raw entries filtered to _NOTABLE
+    )  # raw entries, everything except _ROUTINE noise
     poll_errors: list[dict] = field(default_factory=list)
 
 
@@ -96,6 +98,19 @@ def _parse_iso(ts: str) -> datetime | None:
         return datetime.fromisoformat(ts)
     except (ValueError, TypeError):
         return None
+
+
+def _to_local_display(ts: str) -> str:
+    """Format an ISO-8601 timestamp in the machine's LOCAL time, with a tz label.
+
+    The journal stores UTC; a human reading the EOD report wants local wall-clock
+    (a 9:30 ET open should read 09:30, not 13:30). Falls back to the raw trimmed
+    string if the timestamp cannot be parsed.
+    """
+    dt = _parse_iso(ts)
+    if dt is None:
+        return (ts or "")[:19].replace("T", " ")
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 def summarize(entries: list[dict]) -> JournalSummary:
@@ -119,7 +134,7 @@ def summarize(entries: list[dict]) -> JournalSummary:
     for entry in entries:
         etype = entry.get("event_type", "unknown")
         s.event_counts[etype] = s.event_counts.get(etype, 0) + 1
-        if etype in _NOTABLE:
+        if etype not in _ROUTINE:
             s.notable_events.append(entry)
             if etype == "poll_error":
                 s.poll_errors.append(entry)
@@ -157,7 +172,7 @@ def _proceeds_from_payload(payload: dict) -> str:
 
 def _notable_line(entry: dict) -> str:
     """Format one notable event as a single ASCII line."""
-    ts = entry.get("ts", "")[:19].replace("T", " ")  # YYYY-MM-DD HH:MM:SS
+    ts = _to_local_display(entry.get("ts", ""))
     etype = entry.get("event_type", "unknown")
     payload = entry.get("payload", {})
 
@@ -219,17 +234,26 @@ def _notable_line(entry: dict) -> str:
             parts.append(f"error={err!r}")
 
     else:
-        # Unknown notable type: show raw payload compactly
+        # Unknown / un-templated event type (e.g. monitor_start, or a brand-new
+        # event the monitor starts logging): show the raw payload compactly so it
+        # is never silently dropped from the timeline.
         compact = json.dumps(payload, separators=(",", ":"))
-        if len(compact) > 80:
+        if compact == "{}":
+            compact = "(no payload)"
+        elif len(compact) > 80:
             compact = compact[:77] + "..."
         parts.append(compact)
 
-    return "  ".join(parts)
+    # rstrip() trims the column padding when an event has no detail fields, so
+    # bare lines carry no invisible trailing whitespace.
+    return "  ".join(parts).rstrip()
 
 
 def format_report(
-    summary: JournalSummary, n_malformed: int, file_labels: list[str] | None = None
+    summary: JournalSummary,
+    n_malformed: int,
+    file_labels: list[str] | None = None,
+    unreadable: list[str] | None = None,
 ) -> str:
     """
     Render summary as a printable ASCII text block.
@@ -253,7 +277,10 @@ def format_report(
     lines.append(f"  Lines read   : {total_entries + n_malformed}")
     lines.append(f"  Valid entries: {total_entries}")
     if n_malformed:
-        lines.append(f"  Malformed (skipped): {n_malformed}")
+        lines.append(f"  Malformed lines (skipped): {n_malformed}")
+    if unreadable:
+        for path in unreadable:
+            lines.append(f"  Unreadable file (skipped): {path}")
 
     # ----- Session span -----
     lines.append("")
@@ -262,8 +289,8 @@ def format_report(
     if summary.first_ts is None:
         lines.append("  (no entries)")
     else:
-        lines.append(f"  Start   : {summary.first_ts}")
-        lines.append(f"  End     : {summary.last_ts}")
+        lines.append(f"  Start   : {_to_local_display(summary.first_ts)}")
+        lines.append(f"  End     : {_to_local_display(summary.last_ts)}")
         lines.append(f"  Duration: {_fmt_duration(summary.duration_seconds)}")
 
     # ----- Event tally -----
@@ -298,7 +325,7 @@ def format_report(
         for entry in summary.poll_errors:
             payload = entry.get("payload", {})
             err = payload.get("error", "(no error detail)")
-            ts = entry.get("ts", "")[:19].replace("T", " ")
+            ts = _to_local_display(entry.get("ts", ""))
             lines.append(f"  {ts}  {err}")
 
     lines.append(sep)
@@ -339,9 +366,9 @@ def main() -> None:
         return
 
     files = sorted(files)
-    entries, n_malformed = load_journal(files)
+    entries, n_malformed, unreadable = load_journal(files)
     s = summarize(entries)
-    report = format_report(s, n_malformed, file_labels=files)
+    report = format_report(s, n_malformed, file_labels=files, unreadable=unreadable)
     print(report)
 
 

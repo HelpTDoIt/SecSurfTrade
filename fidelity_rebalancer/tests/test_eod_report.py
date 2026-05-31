@@ -13,9 +13,13 @@ from pathlib import Path
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
+from datetime import datetime
+
 from cli.eod_report import (
     JournalSummary,
     _fmt_duration,
+    _notable_line,
+    _to_local_display,
     format_report,
     load_journal,
     summarize,
@@ -50,7 +54,7 @@ class TestLoadJournal:
     def test_empty_file_returns_no_entries(self, tmp_path):
         f = tmp_path / "empty.jsonl"
         f.write_text("", encoding="utf-8")
-        entries, n_bad = load_journal([str(f)])
+        entries, n_bad, _ = load_journal([str(f)])
         assert entries == []
         assert n_bad == 0
 
@@ -64,7 +68,7 @@ class TestLoadJournal:
                 _entry("2026-05-01T10:01:00+00:00", "heartbeat"),
             ],
         )
-        entries, n_bad = load_journal([str(f)])
+        entries, n_bad, _ = load_journal([str(f)])
         assert n_bad == 1
         assert len(entries) == 2
 
@@ -78,7 +82,7 @@ class TestLoadJournal:
                 _entry("2026-05-01T10:03:00+00:00", "heartbeat"),
             ],
         )
-        entries, _ = load_journal([str(f)])
+        entries, _, _ = load_journal([str(f)])
         tss = [e["ts"] for e in entries]
         assert tss == sorted(tss)
 
@@ -99,7 +103,7 @@ class TestLoadJournal:
                 _entry("2026-05-01T09:03:00+00:00", "stall_detected"),
             ],
         )
-        entries, n_bad = load_journal([str(f1), str(f2)])
+        entries, n_bad, _ = load_journal([str(f1), str(f2)])
         assert n_bad == 0
         assert len(entries) == 4
         tss = [e["ts"] for e in entries]
@@ -111,7 +115,7 @@ class TestLoadJournal:
             json.dumps({"ts": "2026-05-01T10:00:00+00:00"}) + "\n",
             encoding="utf-8",
         )
-        entries, n_bad = load_journal([str(f)])
+        entries, n_bad, _ = load_journal([str(f)])
         assert n_bad == 1
         assert entries == []
 
@@ -123,9 +127,18 @@ class TestLoadJournal:
             "\n" + json.dumps(_entry("2026-05-01T10:01:00+00:00", "heartbeat")) + "\n"
         )
         f.write_text(content, encoding="utf-8")
-        entries, n_bad = load_journal([str(f)])
+        entries, n_bad, _ = load_journal([str(f)])
         assert len(entries) == 2
         assert n_bad == 0
+
+    def test_unreadable_file_tracked_separately_not_malformed(self, tmp_path):
+        """A file that cannot be opened is reported in `unreadable`, and is NOT
+        miscounted as a malformed line."""
+        missing = tmp_path / "does_not_exist.jsonl"
+        entries, n_bad, unreadable = load_journal([str(missing)])
+        assert entries == []
+        assert n_bad == 0
+        assert unreadable == [str(missing)]
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +350,7 @@ class TestPayloadDrift:
                 ),
             ],
         )
-        entries, n_bad = load_journal([str(f)])
+        entries, n_bad, _ = load_journal([str(f)])
         assert n_bad == 1
         assert len(entries) == 3
 
@@ -382,7 +395,7 @@ class TestRealFixture:
             import pytest
 
             pytest.skip("fixture not found")
-        entries, n_bad = load_journal([str(self._FIXTURE)])
+        entries, n_bad, _ = load_journal([str(self._FIXTURE)])
         assert n_bad == 0
         assert len(entries) == 6
 
@@ -391,7 +404,7 @@ class TestRealFixture:
             import pytest
 
             pytest.skip("fixture not found")
-        entries, n_bad = load_journal([str(self._FIXTURE)])
+        entries, n_bad, _ = load_journal([str(self._FIXTURE)])
         s = summarize(entries)
         assert s.first_ts is not None
         assert s.last_ts is not None
@@ -406,7 +419,7 @@ class TestRealFixture:
             import pytest
 
             pytest.skip("fixture not found")
-        entries, n_bad = load_journal([str(self._FIXTURE)])
+        entries, n_bad, _ = load_journal([str(self._FIXTURE)])
         s = summarize(entries)
         report = format_report(s, n_bad)
         # Spot-check key content
@@ -416,3 +429,93 @@ class TestRealFixture:
         assert "103,255.45" in report or "103255" in report
         # original_chunk/new_chunk aliases in fixture
         assert "s2" in report
+
+
+# ---------------------------------------------------------------------------
+# Unknown / future event types (fix #1)
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownEvents:
+    def test_unknown_event_type_is_notable(self):
+        """A brand-new event type the report has no template for must still be
+        counted AND appear in the notable timeline (never silently dropped)."""
+        entries = [
+            _entry("2026-05-01T10:00:00+00:00", "poll"),
+            _entry("2026-05-01T10:01:00+00:00", "mystery_event", {"weird": [1, 2]}),
+        ]
+        s = summarize(entries)
+        notable_types = [e["event_type"] for e in s.notable_events]
+        assert "mystery_event" in notable_types
+        assert "poll" not in notable_types
+
+    def test_unknown_event_payload_rendered_in_timeline(self):
+        entries = [
+            _entry("2026-05-01T10:01:00+00:00", "mystery_event", {"k": "v"}),
+        ]
+        report = format_report(summarize(entries), 0)
+        assert "mystery_event" in report
+        assert '"k":"v"' in report  # compact raw payload dump
+
+    def test_monitor_start_now_appears_in_timeline(self):
+        """monitor_start is meaningful (once per session) and should be notable."""
+        entries = [_entry("2026-05-01T10:00:00+00:00", "monitor_start", {"plan": "x"})]
+        s = summarize(entries)
+        assert any(e["event_type"] == "monitor_start" for e in s.notable_events)
+
+
+# ---------------------------------------------------------------------------
+# Local-time display (fix #3.2) + cosmetic trailing whitespace
+# ---------------------------------------------------------------------------
+
+
+class TestLocalTimeDisplay:
+    def test_converts_utc_to_machine_local(self):
+        """_to_local_display must render the same instant in the machine's local
+        zone -- compared against astimezone() so the test is tz-agnostic."""
+        ts = "2026-05-01T13:30:00+00:00"
+        expected = (
+            datetime.fromisoformat(ts).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        )
+        assert _to_local_display(ts) == expected
+
+    def test_unparseable_ts_falls_back_to_raw(self):
+        assert _to_local_display("garbage") == "garbage"
+        assert _to_local_display("") == ""
+
+    def test_session_span_uses_local_time(self):
+        ts = "2026-05-01T13:30:00+00:00"
+        entries = [_entry(ts, "monitor_start")]
+        report = format_report(summarize(entries), 0)
+        expected = datetime.fromisoformat(ts).astimezone().strftime("%H:%M:%S")
+        assert expected in report
+
+
+class TestCosmetic:
+    def test_notable_line_no_trailing_whitespace_when_no_detail(self):
+        """An event with an empty payload must not leave trailing column padding."""
+        line = _notable_line(_entry("2026-05-01T10:00:00+00:00", "recompute_trigger"))
+        assert line == line.rstrip()
+
+    def test_notable_line_with_detail_no_trailing_whitespace(self):
+        line = _notable_line(
+            _entry("2026-05-01T10:00:00+00:00", "stall_detected", {"chunk_id": "s1"})
+        )
+        assert line == line.rstrip()
+        assert "s1" in line
+
+
+# ---------------------------------------------------------------------------
+# Unreadable file surfaced in the report (fix #2)
+# ---------------------------------------------------------------------------
+
+
+class TestUnreadableInReport:
+    def test_unreadable_file_shown_distinctly(self):
+        report = format_report(summarize([]), 0, unreadable=["logs/locked.jsonl"])
+        assert "Unreadable file" in report
+        assert "locked.jsonl" in report
+
+    def test_unreadable_not_labeled_malformed(self):
+        report = format_report(summarize([]), 0, unreadable=["logs/locked.jsonl"])
+        assert "Malformed" not in report
