@@ -1,7 +1,7 @@
 import re
 
 # ── test_plan_trading_window.md ─────────────────────────────────────────────
-tp = r"C:\Users\Jason\Documents\Code\SecSurfTrade\fidelity_rebalancer\docs\test_plan_trading_window.md"
+tp = r"C:\Users\Jason\Documents\Code\SecSurfTrade\docs\test_plan_trading_window.md"
 with open(tp, encoding="utf-8") as f:
     c = f.read()
 
