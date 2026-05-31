@@ -170,9 +170,35 @@ def run_readiness_gate(state, cap: int):
                 missing_l2=[],
                 present_watchlist=[],
                 present_l2=[],
+                visible_l2=[],
             )
 
         report = evaluate_readiness(ft, presence, plan)
+
+        # Echo what THIS fresh OCR pass actually saw.  The watchlist + L2 reads
+        # are re-taken every loop, so after the human changes FT+ they can
+        # confirm here whether the change registered — instead of the gate
+        # silently re-prompting for something they believe they already fixed.
+        if ft.running:
+            if watchlist_rows:
+                _info(
+                    f"Watchlist read (fresh OCR): {len(watchlist_rows)} ticker(s) "
+                    f"detected — {', '.join(sorted(watchlist_rows))}"
+                )
+            else:
+                _warn("Watchlist read (fresh OCR): no tickers detected.")
+            detected_l2 = presence.visible_l2
+            _info(
+                "L2 panels detected (fresh OCR): "
+                + (", ".join(detected_l2) if detected_l2 else "none")
+            )
+            if presence.missing_l2:
+                _info(
+                    "  (L2 panels are read by OCR from the RIGHT-HAND side of the "
+                    "FT+ window; keep each panel's 'Level 2 <SYM>' title visible "
+                    "on the right half or it won't be detected.)"
+                )
+
         _print_readiness(report)
 
         if report.ready:
@@ -181,8 +207,8 @@ def run_readiness_gate(state, cap: int):
 
         _hr()
         ans = _prompt(
-            "     Fix the items above in FT+, then press Enter to re-check "
-            "(or 'q' to abort): "
+            "     Fix the items above in FT+, then press Enter to take a fresh "
+            "OCR snapshot and re-check (or 'q' to abort): "
         )
         if ans.lower() in ("q", "a", "quit", "abort"):
             _err("Preflight aborted by user before readiness.")

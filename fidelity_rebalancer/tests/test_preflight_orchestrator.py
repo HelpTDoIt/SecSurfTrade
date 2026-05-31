@@ -38,7 +38,7 @@ from state.schema import (
 
 
 def make_presence(
-    ok=True, missing_watchlist=None, missing_l2=None
+    ok=True, missing_watchlist=None, missing_l2=None, visible_l2=None
 ) -> TickerPresenceResult:
     return TickerPresenceResult(
         ok=ok,
@@ -46,6 +46,7 @@ def make_presence(
         missing_l2=missing_l2 or [],
         present_watchlist=[],
         present_l2=[],
+        visible_l2=visible_l2 or [],
     )
 
 
@@ -166,6 +167,55 @@ def test_missing_l2_tickers_not_ready_with_lines():
     assert report.ready is False
     joined = " ".join(report.instructions)
     assert "Open an L2 window for DFEN" in joined
+
+
+def test_missing_l2_lists_safe_to_close_panels():
+    # Need DFEN's depth (assigned); SPY and QQQ L2 panels are open but not needed.
+    ft = FtRunningResult(running=True, detail="ok")
+    presence = make_presence(ok=False, missing_l2=["DFEN"], visible_l2=["QQQ", "SPY"])
+    plan = plan_l2_windows([], [("DFEN", 4.0)])
+    report = evaluate_readiness(ft, presence, plan)
+    joined = " ".join(report.instructions)
+    assert "Open an L2 window for DFEN" in joined
+    # Names the open panels that are safe to close, and that none must be kept.
+    assert "Safe to close to free a slot: QQQ, SPY" in joined
+    assert "Do NOT close (still needed for depth): none" in joined
+
+
+def test_missing_l2_keeps_needed_panels_out_of_closeable():
+    # AAA is assigned AND already open; BBB still missing; ZZZ open but not needed.
+    ft = FtRunningResult(running=True, detail="ok")
+    presence = make_presence(ok=False, missing_l2=["BBB"], visible_l2=["AAA", "ZZZ"])
+    plan = plan_l2_windows([], [("AAA", 5.0), ("BBB", 3.0)])
+    report = evaluate_readiness(ft, presence, plan)
+    joined = " ".join(report.instructions)
+    assert "Safe to close to free a slot: ZZZ" in joined
+    # AAA is needed depth -> must be listed as keep, never as closeable.
+    assert "Do NOT close (still needed for depth): AAA" in joined
+    assert "Safe to close to free a slot: AAA" not in joined
+
+
+def test_missing_l2_all_slots_needed_suggests_cap():
+    # cap 2, both slots open by needed (assigned) tickers, a third thin ticker
+    # is missing its window -> no panel is safe to close; suggest raising cap.
+    ft = FtRunningResult(running=True, detail="ok")
+    presence = make_presence(ok=False, missing_l2=["CCC"], visible_l2=["AAA", "BBB"])
+    plan = plan_l2_windows([], [("AAA", 5.0), ("BBB", 4.0), ("CCC", 3.0)], cap=2)
+    assert plan.l2_assigned == ["AAA", "BBB"]
+    report = evaluate_readiness(ft, presence, plan)
+    joined = " ".join(report.instructions)
+    assert "All 2 L2 window slot(s) are in use" in joined
+    assert "Raise --cap" in joined
+
+
+def test_no_closeable_guidance_when_no_l2_missing():
+    # Nothing missing in L2 -> no safe-to-close noise even if extra panels open.
+    ft = FtRunningResult(running=True, detail="ok")
+    presence = make_presence(ok=True, visible_l2=["SPY", "QQQ"])
+    plan = plan_l2_windows(["SPY"], [])
+    report = evaluate_readiness(ft, presence, plan)
+    joined = " ".join(report.instructions)
+    assert "Safe to close" not in joined
 
 
 def test_overflow_present_but_nothing_missing_is_ready():

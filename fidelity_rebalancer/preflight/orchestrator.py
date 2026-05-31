@@ -56,6 +56,33 @@ def evaluate_readiness(
             f"Open an L2 window for {ticker} (thin ticker — needs depth)."
         )
 
+    # When the human must open L2 windows, spell out which currently-open panels
+    # are safe to close — so they don't accidentally close one we still need for
+    # depth.  "Safe" = open panels whose ticker is NOT in the assigned set.
+    if presence.missing_l2:
+        assigned_norm = {t.strip().upper() for t in plan.l2_assigned}
+        visible = list(presence.visible_l2)
+        keep_open = sorted(t for t in visible if t.strip().upper() in assigned_norm)
+        closeable = sorted(t for t in visible if t.strip().upper() not in assigned_norm)
+        if closeable:
+            instructions.append(
+                "L2 windows currently open: "
+                f"{', '.join(visible)}. "
+                "Safe to close to free a slot: "
+                f"{', '.join(closeable)}. "
+                "Do NOT close (still needed for depth): "
+                f"{', '.join(keep_open) if keep_open else 'none'}."
+            )
+        elif plan.cap > 0 and len(visible) >= plan.cap:
+            # All slots are occupied by tickers we actually need — closing any
+            # would drop a needed panel.  The only safe moves are raising the cap
+            # or trading fewer thin tickers at once.
+            instructions.append(
+                f"All {plan.cap} L2 window slot(s) are in use by needed tickers "
+                f"({', '.join(keep_open)}). Raise --cap or reduce the number of "
+                "thin tickers traded at once to add more depth."
+            )
+
     overflow_warnings = [
         f"{ticker} is thin but exceeds the L2 window cap ({plan.cap}); it will "
         f"be sized without live depth unless an L2 window is freed."

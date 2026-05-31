@@ -133,6 +133,21 @@ def test_extra_watchlist_tickers_no_false_missing():
     # present_* reflects only what the plan needed and was found
     assert res.present_watchlist == ["AAA", "AAPL"]
     assert res.present_l2 == ["AAA"]
+    # visible_l2 is the FULL set of open panels, normalized + sorted, including
+    # ones the plan did not need (so the CLI can offer them as safe-to-close).
+    assert res.visible_l2 == ["AAA", "QQQ", "ZZZ"]
+
+
+def test_visible_l2_normalized_and_sorted():
+    plan = plan_l2_windows([], [("AAA", 5.0)])
+    res = check_tickers_present(
+        plan,
+        read_watchlist=_watchlist("AAA"),
+        enumerate_l2=lambda: {" bbb ", "aaa", "CCC"},
+    )
+    # All open panels reported, upper-cased, stripped, sorted — regardless of
+    # whether they were needed.
+    assert res.visible_l2 == ["AAA", "BBB", "CCC"]
 
 
 def test_no_heavy_imports_pulled_in():

@@ -16,7 +16,7 @@ A later CLI decides what to do when something is missing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from preflight.planner import L2WindowPlan
 
@@ -34,6 +34,11 @@ class TickerPresenceResult:
     missing_l2: list[str]  # l2_assigned tickers absent from L2 windows, sorted asc
     present_watchlist: list[str]  # needed tickers found in watchlist, sorted asc
     present_l2: list[str]  # l2_assigned tickers found in L2 windows, sorted asc
+    # ALL L2-panel symbols the OCR pass actually detected, normalized + sorted —
+    # including panels for tickers we do NOT need (so the CLI can tell the human
+    # which open panels are safe to close to free a window slot).  Defaulted so
+    # older keyword constructions keep working.
+    visible_l2: list[str] = field(default_factory=list)
 
 
 def _norm(ticker: str) -> str:
@@ -104,4 +109,5 @@ def check_tickers_present(
         missing_l2=missing_l2,
         present_watchlist=present_watchlist,
         present_l2=present_l2,
+        visible_l2=sorted(visible_l2),
     )
