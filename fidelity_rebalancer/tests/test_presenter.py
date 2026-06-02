@@ -9,6 +9,7 @@ Acceptance criteria:
 - Skipped strategies absent from TXT.
 - Modify flow → plan retains original + override.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,6 +32,7 @@ def _load_state() -> RebalanceState:
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
+
 def _make_app(tmp_path: Path, state: RebalanceState | None = None):
     from tui.app import RebalanceApp
 
@@ -40,6 +42,7 @@ def _make_app(tmp_path: Path, state: RebalanceState | None = None):
 
 # ── Tests ─────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_app_renders_first_strategy(tmp_path: Path):
     """App opens and the first strategy header is visible."""
@@ -48,7 +51,7 @@ async def test_app_renders_first_strategy(tmp_path: Path):
         await pilot.pause()
         all_text = " ".join(str(w.content) for w in app.screen.query("Static"))
         assert "EEM" in all_text
-        assert "Roth IRA" in all_text
+        assert "Test Retirement" in all_text
 
 
 @pytest.mark.anyio
@@ -99,6 +102,7 @@ async def test_full_approval_writes_json_and_txt(tmp_path: Path):
 
     # Validate JSON parses
     from state.schema import PlanOutput
+
     plan = PlanOutput.model_validate_json(jsons[0].read_text(encoding="utf-8"))
     assert len(plan.decisions) == 3
     assert all(d.approval_status == "approved" for d in plan.decisions)
@@ -133,6 +137,7 @@ async def test_skip_excludes_from_txt(tmp_path: Path):
     assert len(txts) >= 1
 
     from state.schema import PlanOutput
+
     plan = PlanOutput.model_validate_json(jsons[0].read_text(encoding="utf-8"))
     sell_decision = next(d for d in plan.decisions if d.side == "sell")
     assert sell_decision.approval_status == "skipped"
@@ -167,6 +172,7 @@ async def test_modify_opens_and_cancel_returns_to_presenter(tmp_path: Path):
     plans_dir = tmp_path / "plans"
     jsons = list(plans_dir.glob("plan_*.json"))
     from state.schema import PlanOutput
+
     plan = PlanOutput.model_validate_json(jsons[0].read_text(encoding="utf-8"))
     sell_dec = next(d for d in plan.decisions if d.side == "sell")
     # Cancel did not change the price
@@ -187,6 +193,7 @@ async def test_plan_json_round_trips(tmp_path: Path):
     plans_dir = tmp_path / "plans"
     jsons = list(plans_dir.glob("plan_*.json"))
     from state.schema import PlanOutput
+
     raw = jsons[0].read_text(encoding="utf-8")
     plan1 = PlanOutput.model_validate_json(raw)
     raw2 = plan1.model_dump_json(indent=2)

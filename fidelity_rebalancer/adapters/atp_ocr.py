@@ -1,4 +1,4 @@
-﻿"""
+"""
 OCR-based adapters for Fidelity Trader+ data not accessible via UIA.
 
 Uses rapidocr-onnxruntime (PaddleOCR models via ONNX — works on Python 3.14+,
@@ -16,6 +16,7 @@ Algorithm:
 Install:
   pip install rapidocr-onnxruntime pillow
 """
+
 from __future__ import annotations
 
 import io
@@ -36,6 +37,7 @@ def enable_debug() -> None:
     global _DEBUG
     _DEBUG = True
 
+
 from adapters import Level, Level2Snapshot, OrderRow, OrderStatus
 from adapters._atp_connect import get_app, with_retry
 from adapters._atp_parse import parse_price, parse_size
@@ -43,13 +45,16 @@ from adapters._atp_ui import get_panel_container, sv_children
 
 # ── OCR engine (singleton) ────────────────────────────────────────────────
 
+
 @lru_cache(maxsize=1)
 def _ocr_engine():
     from rapidocr_onnxruntime import RapidOCR
+
     return RapidOCR(det_model_path=None, det_limit_side_len=2400, det_limit_type="max")
 
 
 # ── Screenshot helpers ─────────────────────────────────────────────────────
+
 
 def _capture_full_window() -> np.ndarray:
     """
@@ -72,18 +77,18 @@ def _capture_full_window() -> np.ndarray:
     w, h = right - left, bottom - top
 
     hwnd_dc = win32gui.GetWindowDC(hwnd)
-    mem_dc  = win32ui.CreateDCFromHandle(hwnd_dc)
+    mem_dc = win32ui.CreateDCFromHandle(hwnd_dc)
     save_dc = mem_dc.CreateCompatibleDC()
-    bmp     = win32ui.CreateBitmap()
+    bmp = win32ui.CreateBitmap()
     bmp.CreateCompatibleBitmap(mem_dc, w, h)
     save_dc.SelectObject(bmp)
 
     # PW_RENDERFULLCONTENT = 2  →  captures DWM-composited / GPU-rendered frames
     ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 2)
 
-    raw  = bmp.GetBitmapBits(True)           # bytes in BGRA order
-    arr  = np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 4)
-    arr  = arr[:, :, [2, 1, 0]].copy()       # BGRA → RGB
+    raw = bmp.GetBitmapBits(True)  # bytes in BGRA order
+    arr = np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 4)
+    arr = arr[:, :, [2, 1, 0]].copy()  # BGRA → RGB
 
     win32gui.DeleteObject(bmp.GetHandle())
     save_dc.DeleteDC()
@@ -100,8 +105,10 @@ def _run_ocr(img: np.ndarray, label: str = "ocr") -> list[_Cell]:
     """Run RapidOCR and return _Cell list; saves debug image and prints hits if enabled."""
     if _DEBUG:
         Image.fromarray(img).save(f"debug_{label}.png")
-        print(f"[OCR DEBUG] {label}: image {img.shape[1]}x{img.shape[0]}px"
-              f" -> debug_{label}.png")
+        print(
+            f"[OCR DEBUG] {label}: image {img.shape[1]}x{img.shape[0]}px"
+            f" -> debug_{label}.png"
+        )
     ocr = _ocr_engine()
     result, _ = ocr(img)
     cells = _ocr_to_cells(result or [])
@@ -112,39 +119,45 @@ def _run_ocr(img: np.ndarray, label: str = "ocr") -> list[_Cell]:
     return cells
 
 
-def _crop_section(img: np.ndarray, cells: list[_Cell],
-                  start_label: str, end_label: str | None,
-                  pad_top: int = 0, pad_bottom: int = 400) -> np.ndarray:
+def _crop_section(
+    img: np.ndarray,
+    cells: list[_Cell],
+    start_label: str,
+    end_label: str | None,
+    pad_top: int = 0,
+    pad_bottom: int = 400,
+) -> np.ndarray:
     """
     Crop *img* vertically to the section bounded by OCR-detected labels.
     start_label: text that marks the top of the section (e.g. 'Level 2').
     end_label:   text that marks the bottom (None = use pad_bottom from start).
     """
     start_y: float | None = None
-    end_y:   float | None = None
+    end_y: float | None = None
 
     for cell in cells:
         if start_label.lower() in cell.text.lower() and start_y is None:
             start_y = cell.y
         if end_label and end_label.lower() in cell.text.lower() and start_y is not None:
-            if cell.y > start_y + 10:   # must be below start
+            if cell.y > start_y + 10:  # must be below start
                 end_y = cell.y
                 break
 
     if start_y is None:
-        return img   # can't find section; return full image
+        return img  # can't find section; return full image
 
     h = img.shape[0]
-    top    = max(0, int(start_y) - pad_top)
+    top = max(0, int(start_y) - pad_top)
     bottom = min(h, int(end_y) if end_y else int(start_y) + pad_bottom)
     return img[top:bottom, :]
 
 
 # ── Row clustering ────────────────────────────────────────────────────────
 
+
 class _Cell(NamedTuple):
-    x: float   # horizontal center
-    y: float   # vertical center
+    x: float  # horizontal center
+    y: float  # vertical center
     text: str
 
 
@@ -200,6 +213,7 @@ def _texts(row: list[_Cell]) -> list[str]:
 
 # ── Column calibration ────────────────────────────────────────────────────
 
+
 def _find_col_x(rows: list[list[_Cell]], header_labels: list[str]) -> dict[str, float]:
     """
     Find the x-center of each named column by scanning for a header row.
@@ -229,8 +243,19 @@ def _assign_col(x: float, col_xs: list[float], col_names: list[str]) -> int:
 # ── L2 parsing ────────────────────────────────────────────────────────────
 # Expected header: Exch | Size | Bid | Ask | Size | Exch
 _L2_HEADERS = ["Exch", "Size", "Bid", "Ask"]
-_L2_SKIP_TEXTS = {"exch", "size", "bid", "ask", "level 2", "level2",
-                   "export", "search", "edit", "totals", "total"}
+_L2_SKIP_TEXTS = {
+    "exch",
+    "size",
+    "bid",
+    "ask",
+    "level 2",
+    "level2",
+    "export",
+    "search",
+    "edit",
+    "totals",
+    "total",
+}
 
 
 def _is_l2_header(row: list[_Cell]) -> bool:
@@ -238,8 +263,9 @@ def _is_l2_header(row: list[_Cell]) -> bool:
     return bool(low & {"bid", "ask", "exch"})
 
 
-def _parse_l2_from_rows(rows: list[list[_Cell]], img_width: int
-                        ) -> tuple[list[Level], list[Level]]:
+def _parse_l2_from_rows(
+    rows: list[list[_Cell]], img_width: int
+) -> tuple[list[Level], list[Level]]:
     bids: list[Level] = []
     asks: list[Level] = []
 
@@ -263,8 +289,8 @@ def _parse_l2_from_rows(rows: list[list[_Cell]], img_width: int
             continue
 
         # Split row cells into bid side (x < mid_x) and ask side (x >= mid_x)
-        bid_cells  = [c for c in filtered if c.x < mid_x]
-        ask_cells  = [c for c in filtered if c.x >= mid_x]
+        bid_cells = [c for c in filtered if c.x < mid_x]
+        ask_cells = [c for c in filtered if c.x >= mid_x]
 
         def _extract_side(cells: list[_Cell]) -> tuple[float, int, str]:
             """Return (price, size, mpid) from a set of cells on one side."""
@@ -303,7 +329,7 @@ def _find_l2_grid_ctrl(controls: list, symbol: str):
     for ctrl in controls:
         try:
             ctype = ctrl.element_info.control_type
-            text  = ctrl.window_text().strip()
+            text = ctrl.window_text().strip()
         except Exception:
             continue
         if ctype == "Edit" and text.upper() == sym:
@@ -317,14 +343,18 @@ def _find_l2_grid_ctrl(controls: list, symbol: str):
     return last_custom
 
 
-_L2_TICKER_RE = __import__("re").compile(r'^[A-Z]{1,6}$')
+_L2_TICKER_RE = __import__("re").compile(r"^[A-Z]{1,6}$")
 
 
 def _find_l2_panels(full: np.ndarray) -> dict[str, dict]:
     """
-    Identify L2 panel bounding boxes by OCR-ing top-right and bottom-right
-    quadrants separately.  Full-image OCR misses small panel title text due
-    to downscaling; quadrant crops maintain enough resolution.
+    Identify L2 panel bounding boxes by OCR-ing the window in quadrants.
+
+    Full-image OCR misses small panel title text due to downscaling, so we OCR
+    the left and right halves of each vertical band separately (preserving
+    resolution) and merge the detected cells before locating panels.  This
+    covers the FULL window width — an L2 panel whose "Level 2 <SYM>" title sits
+    in the LEFT half is detected just as reliably as one on the right.
 
     Returns {SYMBOL: {'x_min', 'x_max', 'data_y', 'quadrant': 'top'|'bottom'}}.
     """
@@ -334,39 +364,56 @@ def _find_l2_panels(full: np.ndarray) -> dict[str, dict]:
 
     panels: dict[str, dict] = {}
 
-    for q_name, y_off, crop in [
-        ("top", 0, full[:mid_y, mid_x:, :]),
-        ("bottom", mid_y, full[mid_y:, mid_x:, :]),
-    ]:
-        result, _ = ocr(crop)
-        cells = [_Cell(c.x + mid_x, c.y + y_off, c.text)
-                 for c in _ocr_to_cells(result or [])]
+    bands = [("top", 0, mid_y), ("bottom", mid_y, img_h)]
+    for q_name, y0, y1 in bands:
+        # OCR left and right halves of the band separately to keep small title
+        # text above the OCR detection threshold, then merge into one cell set.
+        cells: list[_Cell] = []
+        for x_off, x0, x1 in [(0, 0, mid_x), (mid_x, mid_x, img_w)]:
+            result, _ = ocr(full[y0:y1, x0:x1, :])
+            cells.extend(
+                _Cell(c.x + x_off, c.y + y0, c.text)
+                for c in _ocr_to_cells(result or [])
+            )
 
-        l2_labels = [c for c in cells
-                     if "level" in c.text.lower() and "2" in c.text]
+        l2_labels = [c for c in cells if "level" in c.text.lower() and "2" in c.text]
         if not l2_labels:
             continue
 
         l2_labels.sort(key=lambda c: c.x)
         row_panels: list[tuple[str, float, float]] = []  # (ticker, l2_x, l2_y)
+        seen: set[str] = set()
 
         for lbl in l2_labels:
-            near = [c for c in cells
-                    if _L2_TICKER_RE.match(c.text.strip().upper())
-                    and len(c.text.strip()) >= 2
-                    and abs(c.y - lbl.y) < 20
-                    and lbl.x - 400 < c.x < lbl.x + 50
-                    and c.text.strip().upper() not in ("LEVEL",)]
+            near = [
+                c
+                for c in cells
+                if _L2_TICKER_RE.match(c.text.strip().upper())
+                and len(c.text.strip()) >= 2
+                and abs(c.y - lbl.y) < 20
+                and lbl.x - 400 < c.x < lbl.x + 50
+                and c.text.strip().upper() not in ("LEVEL",)
+            ]
             if near:
                 best = min(near, key=lambda c: abs(c.x - lbl.x))
-                row_panels.append((best.text.strip().upper(), lbl.x, lbl.y))
+                sym = best.text.strip().upper()
+                # A title near the mid-x seam can be picked up in both halves;
+                # keep only the first occurrence per symbol within this band.
+                if sym in seen:
+                    continue
+                seen.add(sym)
+                row_panels.append((sym, lbl.x, lbl.y))
 
         for i, (sym, x, y) in enumerate(row_panels):
-            x_min = mid_x if i == 0 else (row_panels[i - 1][1] + x) / 2
-            x_max = img_w if i == len(row_panels) - 1 else (x + row_panels[i + 1][1]) / 2
+            x_min = 0 if i == 0 else (row_panels[i - 1][1] + x) / 2
+            x_max = (
+                img_w if i == len(row_panels) - 1 else (x + row_panels[i + 1][1]) / 2
+            )
             panels[sym] = {
-                "x_min": x_min, "x_max": x_max,
-                "data_y": y + 60, "quadrant": q_name,
+                "x_min": x_min,
+                "x_max": x_max,
+                "data_y": y + 60,
+                "quadrant": q_name,
             }
 
     return panels
@@ -414,14 +461,18 @@ def _read_l2_ocr(symbol: str) -> Level2Snapshot:
     ocr = _ocr_engine()
     result, _ = ocr(panel_crop)
     # Divide scaled coordinates by 2 then offset to full-image space
-    all_cells = [_Cell(c.x / scale + px0, c.y / scale + y_off, c.text)
-                 for c in _ocr_to_cells(result or [])]
+    all_cells = [
+        _Cell(c.x / scale + px0, c.y / scale + y_off, c.text)
+        for c in _ocr_to_cells(result or [])
+    ]
 
     # Filter to below the data header row
     panel_cells = [c for c in all_cells if c.y >= panel["data_y"]]
 
     if _DEBUG:
-        print(f'[L2 DEBUG] {sym} data_y={panel["data_y"]:.0f}  {len(panel_cells)} cells')
+        print(
+            f"[L2 DEBUG] {sym} data_y={panel['data_y']:.0f}  {len(panel_cells)} cells"
+        )
         for c in sorted(panel_cells, key=lambda c: (c.y, c.x)):
             print(f"  x={c.x:7.0f}  y={c.y:6.0f}  {c.text!r}")
 
@@ -455,23 +506,44 @@ class OCRLevel2Adapter:
         return with_retry(lambda: _read_l2_ocr(symbol), label=f"OCR L2 {symbol}")
 
 
+def enumerate_l2_symbols() -> set[str]:
+    """Return the set of ticker symbols currently visible in FT+ L2 panels."""
+    full = _capture_full_window()
+    return set(_find_l2_panels(full).keys())
+
+
 # ── Orders parsing ────────────────────────────────────────────────────────
 # Key columns we care about (others are ignored)
-_ORDER_HEADERS = ["Symbol", "Action", "Amount", "Order Type", "Status",
-                  "Filled", "Last", "$Chg", "%Chg", "Bid", "Account",
-                  "Mid", "Ask", "TIF", "Conditions", "Destination",
-                  "Order Time"]
+_ORDER_HEADERS = [
+    "Symbol",
+    "Action",
+    "Amount",
+    "Order Type",
+    "Status",
+    "Filled",
+    "Last",
+    "$Chg",
+    "%Chg",
+    "Bid",
+    "Account",
+    "Mid",
+    "Ask",
+    "TIF",
+    "Conditions",
+    "Destination",
+    "Order Time",
+]
 _STATUS_MAP: dict[str, OrderStatus] = {
-    "open":            OrderStatus.Open,
+    "open": OrderStatus.Open,
     "partiallyfilled": OrderStatus.PartiallyFilled,
-    "partial":         OrderStatus.PartiallyFilled,
-    "filled":          OrderStatus.Filled,
-    "cancelled":       OrderStatus.Cancelled,
-    "canceled":        OrderStatus.Cancelled,
-    "rejected":        OrderStatus.Rejected,
+    "partial": OrderStatus.PartiallyFilled,
+    "filled": OrderStatus.Filled,
+    "cancelled": OrderStatus.Cancelled,
+    "canceled": OrderStatus.Cancelled,
+    "rejected": OrderStatus.Rejected,
 }
-_TICKER_RE = __import__("re").compile(r'^[A-Z]{1,6}(\.\w+)?$')
-_LIMIT_RE  = __import__("re").compile(r'\$?\s*([\d,]+\.?\d*)')
+_TICKER_RE = __import__("re").compile(r"^[A-Z]{1,6}(\.\w+)?$")
+_LIMIT_RE = __import__("re").compile(r"\$?\s*([\d,]+\.?\d*)")
 
 
 def _is_order_header(row: list[_Cell]) -> bool:
@@ -484,7 +556,7 @@ def _find_orders_grid_ctrl(controls: list):
     for ctrl in controls:
         try:
             ctype = ctrl.element_info.control_type
-            text  = ctrl.window_text().strip()
+            text = ctrl.window_text().strip()
         except Exception:
             continue
         if ctype == "Text" and text == "Orders" and not found_orders:
@@ -500,7 +572,7 @@ def _parse_orders_from_rows(rows: list[list[_Cell]]) -> list[OrderRow]:
     col_names: list[str] = []
     for row in rows:
         if _is_order_header(row):
-            col_xs   = [c.x for c in row]
+            col_xs = [c.x for c in row]
             col_names = [c.text for c in row]
             break
 
@@ -521,52 +593,69 @@ def _parse_orders_from_rows(rows: list[list[_Cell]]) -> list[OrderRow]:
                 row_dict[col] = cell.text
         else:
             # Fallback: positional (Symbol=0, Action=1, Amount=2, OrderType=3, Status=4, ...)
-            names = ["Symbol", "Action", "Amount", "Order Type", "Status",
-                     "Filled", "Last", "$Chg", "%Chg", "Bid", "Account",
-                     "Mid", "Ask", "TIF", "Conditions", "Destination",
-                     "Order Time"]
+            names = [
+                "Symbol",
+                "Action",
+                "Amount",
+                "Order Type",
+                "Status",
+                "Filled",
+                "Last",
+                "$Chg",
+                "%Chg",
+                "Bid",
+                "Account",
+                "Mid",
+                "Ask",
+                "TIF",
+                "Conditions",
+                "Destination",
+                "Order Time",
+            ]
             row_dict = {names[i]: txts[i] for i in range(min(len(names), len(txts)))}
 
         symbol = row_dict.get("Symbol", "").strip().upper()
         if not symbol or not _TICKER_RE.match(symbol):
             continue
 
-        side   = row_dict.get("Action", "BUY").upper()
-        qty    = float(parse_size(row_dict.get("Amount", "0")) or 0)
+        side = row_dict.get("Action", "BUY").upper()
+        qty = float(parse_size(row_dict.get("Amount", "0")) or 0)
         status_txt = row_dict.get("Status", "open").lower().replace(" ", "")
         status = _STATUS_MAP.get(status_txt, OrderStatus.Open)
 
         filled_qty = float(parse_size(row_dict.get("Filled", "0")) or 0)
 
-        order_type  = row_dict.get("Order Type", "")
+        order_type = row_dict.get("Order Type", "")
         m = _LIMIT_RE.search(order_type)
         limit_price = parse_price(m.group(1)) if m else 0.0
 
-        account   = row_dict.get("Account", "")
+        account = row_dict.get("Account", "")
         placed_at = datetime.now(tz=timezone.utc)
 
-        last_px  = parse_price(row_dict.get("Last", "0"))
-        bid_px   = parse_price(row_dict.get("Bid", "0"))
-        ask_px   = parse_price(row_dict.get("Ask", "0"))
-        mid_px   = parse_price(row_dict.get("Mid", "0"))
-        tif      = row_dict.get("TIF", "").strip()
+        last_px = parse_price(row_dict.get("Last", "0"))
+        bid_px = parse_price(row_dict.get("Bid", "0"))
+        ask_px = parse_price(row_dict.get("Ask", "0"))
+        mid_px = parse_price(row_dict.get("Mid", "0"))
+        tif = row_dict.get("TIF", "").strip()
 
-        order_rows.append(OrderRow(
-            account=account,
-            symbol=symbol,
-            side=side,
-            qty=qty,
-            filled_qty=filled_qty,
-            limit_price=limit_price,
-            status=status,
-            placed_at=placed_at,
-            last_update_at=placed_at,
-            last_price=last_px,
-            bid=bid_px,
-            ask=ask_px,
-            mid=mid_px,
-            tif=tif,
-        ))
+        order_rows.append(
+            OrderRow(
+                account=account,
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                filled_qty=filled_qty,
+                limit_price=limit_price,
+                status=status,
+                placed_at=placed_at,
+                last_update_at=placed_at,
+                last_price=last_px,
+                bid=bid_px,
+                ask=ask_px,
+                mid=mid_px,
+                tif=tif,
+            )
+        )
 
     return order_rows
 
@@ -583,8 +672,7 @@ def _read_orders_ocr() -> list[OrderRow]:
         return []  # orders panel not visible
 
     header_y = min(c.y for c in symbol_headers)
-    orders_cells = [c for c in all_cells
-                    if header_y - 5 <= c.y <= header_y + 300]
+    orders_cells = [c for c in all_cells if header_y - 5 <= c.y <= header_y + 300]
 
     rows = _cluster_rows(orders_cells)
     return _parse_orders_from_rows(rows)

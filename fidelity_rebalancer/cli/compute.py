@@ -5,6 +5,7 @@ Usage (from SecSurfTrade/ or fidelity_rebalancer/):
     python -m fidelity_rebalancer.cli.compute --signals signals.json --export engine_state.json
     python -m cli.compute --signals signals.json --export engine_state.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,6 +41,7 @@ from state.schema import (
     SignalInput,
 )
 
+
 def _load_accounts_config() -> dict[str, dict]:
     config_path = Path(__file__).parent.parent / "accounts.json"
     if not config_path.exists():
@@ -70,30 +72,34 @@ def _build_state(
         positions_dict: dict = accounts_raw[acct_name]["positions"]
         spaxx_val = positions_dict.get("SPAXX**", {}).get("value", 0.0)
 
-        account_inputs.append(AccountInput(
-            name=acct_name,
-            type=cfg["type"],
-            cash_reserve=float(cfg["cashReserve"]),
-            positions=[
-                PositionInput(
-                    symbol=sym,
-                    quantity=p["quantity"],
-                    price=p["price"],
-                    value=p["value"],
-                )
-                for sym, p in positions_dict.items()
-            ],
-            cash_spaxx=spaxx_val,
-            strategy_allocations=cfg["strategies"],
-        ))
+        account_inputs.append(
+            AccountInput(
+                name=acct_name,
+                type=cfg["type"],
+                cash_reserve=float(cfg["cashReserve"]),
+                positions=[
+                    PositionInput(
+                        symbol=sym,
+                        quantity=p["quantity"],
+                        price=p["price"],
+                        value=p["value"],
+                    )
+                    for sym, p in positions_dict.items()
+                ],
+                cash_spaxx=spaxx_val,
+                strategy_allocations=cfg["strategies"],
+            )
+        )
         for strat in cfg["strategies"]:
             sig = signals.get(strat, {})
-            signal_inputs.append(SignalInput(
-                account=acct_name,
-                strategy=strat,
-                current_ticker=sig.get("current", ""),
-                new_ticker=sig.get("new", ""),
-            ))
+            signal_inputs.append(
+                SignalInput(
+                    account=acct_name,
+                    strategy=strat,
+                    current_ticker=sig.get("current", ""),
+                    new_ticker=sig.get("new", ""),
+                )
+            )
 
     inputs_obj = Inputs(
         accounts=account_inputs,
@@ -122,14 +128,16 @@ def _build_state(
         one_share_total[acct_name] = result["one_share_total"]
 
         for sell in result["sells"]:
-            sell_records.append(SellRecord(
-                account=acct_name,
-                strategy=sell["strategy"],
-                ticker=sell["ticker"],
-                shares=sell["quantity"],
-                limit_price=sell["limit_price"],
-                est_proceeds=sell["est_proceeds"],
-            ))
+            sell_records.append(
+                SellRecord(
+                    account=acct_name,
+                    strategy=sell["strategy"],
+                    ticker=sell["ticker"],
+                    shares=sell["quantity"],
+                    limit_price=sell["limit_price"],
+                    est_proceeds=sell["est_proceeds"],
+                )
+            )
             sell_chunk_dicts = (
                 build_sell_chunks_legacy(sell["quantity"], sell["limit_price"])
                 if chunker == "legacy_dollar"
@@ -137,29 +145,33 @@ def _build_state(
             )
             for ch in sell_chunk_dicts:
                 sell_ctr += 1
-                sell_chunks.append(ChunkRecord(
-                    chunk_id=f"s{sell_ctr}",
-                    account=acct_name,
-                    strategy=sell["strategy"],
-                    ticker=sell["ticker"],
-                    idx=ch["idx"],
-                    shares=ch["shares"],
-                    limit_price=ch["limit_price"],
-                    cost=ch["cost"],
-                ))
+                sell_chunks.append(
+                    ChunkRecord(
+                        chunk_id=f"s{sell_ctr}",
+                        account=acct_name,
+                        strategy=sell["strategy"],
+                        ticker=sell["ticker"],
+                        idx=ch["idx"],
+                        shares=ch["shares"],
+                        limit_price=ch["limit_price"],
+                        cost=ch["cost"],
+                    )
+                )
 
         for buy in result["buys"]:
-            buy_records.append(BuyAllocationRecord(
-                account=acct_name,
-                strategy=buy["strategy"],
-                ticker=buy["ticker"],
-                dollar_target=buy["dollar_target"],
-                limit_price=buy["limit_price"],
-                share_target=buy["shares"],
-                est_cost=buy["est_cost"],
-                is_rebalance=buy["is_rebalance"],
-                target_value=buy["target_value"],
-            ))
+            buy_records.append(
+                BuyAllocationRecord(
+                    account=acct_name,
+                    strategy=buy["strategy"],
+                    ticker=buy["ticker"],
+                    dollar_target=buy["dollar_target"],
+                    limit_price=buy["limit_price"],
+                    share_target=buy["shares"],
+                    est_cost=buy["est_cost"],
+                    is_rebalance=buy["is_rebalance"],
+                    target_value=buy["target_value"],
+                )
+            )
             buy_chunk_dicts = (
                 build_buy_chunks_legacy(buy["dollar_target"], buy["limit_price"])
                 if chunker == "legacy_dollar"
@@ -167,16 +179,18 @@ def _build_state(
             )
             for ch in buy_chunk_dicts:
                 buy_ctr += 1
-                buy_chunks.append(ChunkRecord(
-                    chunk_id=f"b{buy_ctr}",
-                    account=acct_name,
-                    strategy=buy["strategy"],
-                    ticker=buy["ticker"],
-                    idx=ch["idx"],
-                    shares=ch["shares"],
-                    limit_price=ch["limit_price"],
-                    cost=ch["cost"],
-                ))
+                buy_chunks.append(
+                    ChunkRecord(
+                        chunk_id=f"b{buy_ctr}",
+                        account=acct_name,
+                        strategy=buy["strategy"],
+                        ticker=buy["ticker"],
+                        idx=ch["idx"],
+                        shares=ch["shares"],
+                        limit_price=ch["limit_price"],
+                        cost=ch["cost"],
+                    )
+                )
 
     computed = Computed(
         cash_ok=cash_ok,
@@ -238,8 +252,12 @@ def main() -> None:
             "Omit to auto-detect from ~/Downloads."
         ),
     )
-    parser.add_argument("--signals", required=True, help="Path to signals JSON (signals + closes)")
-    parser.add_argument("--export", required=True, help="Output path for the engine state JSON")
+    parser.add_argument(
+        "--signals", required=True, help="Path to signals JSON (signals + closes)"
+    )
+    parser.add_argument(
+        "--export", required=True, help="Output path for the engine state JSON"
+    )
     parser.add_argument(
         "--chunker",
         choices=("legacy_dollar", "book"),
@@ -271,16 +289,41 @@ def main() -> None:
 
     _config_keys_lower = {k.lower(): k for k in ACCOUNTS_CONFIG}
     accounts_raw: dict[str, dict] = {}
+    # When the same account appears in more than one CSV (e.g. a re-download
+    # saved as "...Jun-01-2026 (1).csv"), keep the file with the NEWEST mtime.
+    # A plain dict-overwrite keyed by sorted() filename would let a stale copy
+    # win purely on alphabetical order, silently feeding old positions in.
+    _chosen_mtime: dict[str, float] = {}
+    _chosen_file: dict[str, str] = {}
     for csv_path in sorted(inputs_dir.glob("*.csv")):
         portfolio = read_fidelity_csv(csv_path)
         csv_name = portfolio.account_name
         canonical = _config_keys_lower.get(csv_name.lower())
-        if canonical:
-            accounts_raw[canonical] = {
-                "positions": {sym: p.model_dump() for sym, p in portfolio.positions.items()}
-            }
-        else:
-            print(f"Warning: '{csv_name}' not in ACCOUNTS_CONFIG — skipped", file=sys.stderr)
+        if not canonical:
+            print(
+                f"Warning: '{csv_name}' not in ACCOUNTS_CONFIG — skipped",
+                file=sys.stderr,
+            )
+            continue
+        mtime = csv_path.stat().st_mtime
+        if canonical in _chosen_mtime and mtime <= _chosen_mtime[canonical]:
+            print(
+                f"Skipping older CSV for {canonical}: {csv_path.name} "
+                f"(keeping newer {_chosen_file[canonical]})",
+                file=sys.stderr,
+            )
+            continue
+        if canonical in _chosen_mtime:
+            print(
+                f"Using newer CSV for {canonical}: {csv_path.name} "
+                f"(replaces {_chosen_file[canonical]})",
+                file=sys.stderr,
+            )
+        accounts_raw[canonical] = {
+            "positions": {sym: p.model_dump() for sym, p in portfolio.positions.items()}
+        }
+        _chosen_mtime[canonical] = mtime
+        _chosen_file[canonical] = csv_path.name
 
     if not accounts_raw:
         print("Error: no recognized accounts found in CSV directory", file=sys.stderr)

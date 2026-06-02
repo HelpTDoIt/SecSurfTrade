@@ -1,25 +1,28 @@
 {
   "Account Name 1": {
+    "csvSlot": "roth",
     "type": "retirement",
     "strategies": {
       "Strategy A": 0.25,
-      "Strategy B": 0.30,
-      "Strategy C": 0.20,
+      "Strategy B": 0.3,
+      "Strategy C": 0.2,
       "Strategy D": 0.25
     },
     "cashReserve": 0
   },
   "Account Name 2": {
+    "csvSlot": "rollover",
     "type": "retirement",
     "strategies": {
       "Strategy A": 0.25,
-      "Strategy B": 0.30,
-      "Strategy C": 0.20,
+      "Strategy B": 0.3,
+      "Strategy C": 0.2,
       "Strategy D": 0.25
     },
     "cashReserve": 0
   },
   "Account Name 3": {
+    "csvSlot": "tod",
     "type": "taxable",
     "strategies": {
       "Strategy A": 0.14,

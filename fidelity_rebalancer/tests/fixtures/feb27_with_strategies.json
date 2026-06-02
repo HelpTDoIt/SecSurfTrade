@@ -5,7 +5,7 @@
   "inputs": {
     "accounts": [
       {
-        "name": "Roth IRA",
+        "name": "Test Retirement",
         "type": "retirement",
         "cash_reserve": 0.0,
         "positions": [
@@ -26,21 +26,21 @@
         ],
         "cash_spaxx": 100.0,
         "strategy_allocations": {
-          "Prismatic Prudence": 0.2,
-          "SPDR Respectable": 0.3
+          "Strategy Alpha": 0.2,
+          "Strategy Beta": 0.3
         }
       }
     ],
     "signals": [
       {
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "account": "Test Retirement",
+        "strategy": "Strategy Alpha",
         "current_ticker": "EEM",
         "new_ticker": "EWY"
       },
       {
-        "account": "Roth IRA",
-        "strategy": "SPDR Respectable",
+        "account": "Test Retirement",
+        "strategy": "Strategy Beta",
         "current_ticker": "SMH",
         "new_ticker": "SMH"
       }
@@ -62,15 +62,15 @@
   },
   "computed": {
     "cash_ok": {
-      "Roth IRA": true
+      "Test Retirement": true
     },
     "one_share_total": {
-      "Roth IRA": 338.0
+      "Test Retirement": 338.0
     },
     "sells": [
       {
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "account": "Test Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EEM",
         "shares": 200.0,
         "limit_price": 62.39,
@@ -80,8 +80,8 @@
     ],
     "buy_allocations": [
       {
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "account": "Test Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EWY",
         "dollar_target": 12000.0,
         "limit_price": 75.5,
@@ -91,8 +91,8 @@
         "target_value": 12000.0
       },
       {
-        "account": "Roth IRA",
-        "strategy": "SPDR Respectable",
+        "account": "Test Retirement",
+        "strategy": "Strategy Beta",
         "ticker": "SMH",
         "dollar_target": 5000.0,
         "limit_price": 200.1,
@@ -104,9 +104,9 @@
     ],
     "sell_chunks": [
       {
-        "chunk_id": "s_Roth_IRA_EEM_0",
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "chunk_id": "s_Test_Retirement_EEM_0",
+        "account": "Test Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EEM",
         "idx": 0,
         "shares": 100.0,
@@ -114,9 +114,9 @@
         "cost": 6239.0
       },
       {
-        "chunk_id": "s_Roth_IRA_EEM_1",
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "chunk_id": "s_Test_Retirement_EEM_1",
+        "account": "Test Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EEM",
         "idx": 1,
         "shares": 100.0,
@@ -126,9 +126,9 @@
     ],
     "buy_chunks": [
       {
-        "chunk_id": "b_Roth_IRA_EWY_0",
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "chunk_id": "b_Test_Retirement_EWY_0",
+        "account": "Test Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EWY",
         "idx": 0,
         "shares": 100.0,
@@ -136,9 +136,9 @@
         "cost": 7550.0
       },
       {
-        "chunk_id": "b_Roth_IRA_EWY_1",
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "chunk_id": "b_Test_Retirement_EWY_1",
+        "account": "Test Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EWY",
         "idx": 1,
         "shares": 58.0,
@@ -146,9 +146,9 @@
         "cost": 4379.0
       },
       {
-        "chunk_id": "b_Roth_IRA_SMH_0",
-        "account": "Roth IRA",
-        "strategy": "SPDR Respectable",
+        "chunk_id": "b_Test_Retirement_SMH_0",
+        "account": "Test Retirement",
+        "strategy": "Strategy Beta",
         "ticker": "SMH",
         "idx": 0,
         "shares": 24.0,
@@ -158,8 +158,8 @@
     ],
     "sell_strategies": [
       {
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "account": "Test Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EEM",
         "order_type": "LIMIT",
         "limit_price": 62.39,
@@ -168,19 +168,16 @@
         "reasoning": [
           "Spread is 3.2 bps.",
           "Order is 0.20% of 30-day ADV (200 sh).",
-          "Session volume is 1.20× ADV.",
+          "Session volume is 1.20x ADV.",
           "LIMIT at midpoint $62.3900."
         ],
-        "chunk_ids": [
-          "s_Roth_IRA_EEM_0",
-          "s_Roth_IRA_EEM_1"
-        ]
+        "chunk_ids": ["s_Test_Retirement_EEM_0", "s_Test_Retirement_EEM_1"]
       }
     ],
     "buy_strategies": [
       {
-        "account": "Roth IRA",
-        "strategy": "Prismatic Prudence",
+        "account": "Test Retirement",
+        "strategy": "Strategy Alpha",
         "ticker": "EWY",
         "order_type": "LIMIT",
         "limit_price": 75.5,
@@ -188,18 +185,15 @@
         "rule": "tight_spread_good_volume",
         "reasoning": [
           "Spread is 2.6 bps.",
-          "Session volume is 1.50× ADV.",
+          "Session volume is 1.50x ADV.",
           "Order is 0.16% of 30-day ADV (158 sh).",
-          "LIMIT at ask $75.5000 — likely to fill quickly."
+          "LIMIT at ask $75.5000 - likely to fill quickly."
         ],
-        "chunk_ids": [
-          "b_Roth_IRA_EWY_0",
-          "b_Roth_IRA_EWY_1"
-        ]
+        "chunk_ids": ["b_Test_Retirement_EWY_0", "b_Test_Retirement_EWY_1"]
       },
       {
-        "account": "Roth IRA",
-        "strategy": "SPDR Respectable",
+        "account": "Test Retirement",
+        "strategy": "Strategy Beta",
         "ticker": "SMH",
         "order_type": "LIMIT",
         "limit_price": 200.1,
@@ -207,13 +201,11 @@
         "rule": "wide_spread",
         "reasoning": [
           "Spread is 12.0 bps.",
-          "Wide spread — split the difference.",
+          "Wide spread - split the difference.",
           "LIMIT at midpoint $200.1000.",
           "Order is 0.24% of 30-day ADV (24 sh)."
         ],
-        "chunk_ids": [
-          "b_Roth_IRA_SMH_0"
-        ]
+        "chunk_ids": ["b_Test_Retirement_SMH_0"]
       }
     ],
     "drift": {}

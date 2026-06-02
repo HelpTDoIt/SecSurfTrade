@@ -13,6 +13,8 @@ Pulls SectorSurfer signals, reads Fidelity position CSVs, computes the exact sel
 - **Computes trade plans** — sells, buys, and ≤$100K execution chunks — matching your strategy allocations
 - **React calculator** — browser-based UI for reviewing trades, logging fills, and tracking allocation drift
 - **OCR adapters** — reads live bid/ask/L2 from Fidelity Trader+ via screen capture for limit price generation
+- **Morning preflight** — interactive readiness gate that confirms FT+ has every needed ticker (Watchlist + L2 windows) before sizing, then runs a pre-trade sanity gate
+- **EOD report** — formats the session's journal audit log into a post-session summary
 - **Parity check** — validates engine output against the React calculator's computed trades
 
 ---
@@ -34,7 +36,7 @@ Copy-Item fidelity_rebalancer\accounts.example.json fidelity_rebalancer\accounts
 
 `run.ps1` verifies Python 3.12+, installs packages, downloads the Playwright Chromium browser if needed, and opens the React calculator at `http://localhost:7823/rebalance_calculator.html`.
 
-See [fidelity_rebalancer/USER_GUIDE.md](fidelity_rebalancer/USER_GUIDE.md) for the full daily workflow.
+See [USER_GUIDE.md](USER_GUIDE.md) for the full daily workflow.
 
 ---
 
@@ -53,17 +55,32 @@ See [fidelity_rebalancer/USER_GUIDE.md](fidelity_rebalancer/USER_GUIDE.md) for t
 SecSurfTrade/
 ├── run.ps1                         # one-click launcher and dependency checker
 ├── server.py                       # local Yahoo Finance proxy (CORS bridge for React calc)
-├── scripts/
-│   └── sectorsurfer_signals.py     # SectorSurfer scraper → signals.json
-├── fidelity_rebalancer/
-│   ├── accounts.example.json       # template — copy to accounts.json and fill in yours
-│   ├── engine/                     # pure calculation logic (no I/O)
-│   ├── adapters/                   # ATP OCR readers, CSV importer, mock ATP
-│   ├── state/                      # Pydantic schema, state import/export, parity diff
-│   ├── tui/                        # Textual terminal UI (order approval, live monitor)
-│   ├── cli/                        # CLI entry points (compute, strategy, compare)
-│   └── tests/                      # 182 unit tests
-└── rebalance_calculator.html       # React calculator (CDN React, no build step)
+├── rebalance_calculator.html       # React calculator (CDN React, no build step)
+├── strategy_map.example.json       # template — copy to strategy_map.json and fill in yours
+├── scripts/                        # operational scripts — run these on trading days
+│   ├── sectorsurfer_signals.py     #   SectorSurfer scraper → signals.json
+│   ├── morning-prep.ps1            #   pre-market automation wrapper (1-command setup)
+│   ├── validate_config.py          #   pre-trade config sanity check
+│   ├── exdiv_dryrun.py             #   ex-dividend adjustment dry-run
+│   └── stall_rehearsal.py          #   stall-detection rehearsal
+├── docs/                           # reference documentation
+│   ├── test_plan_atp_integration.md
+│   ├── test_plan_trading_window.md
+│   └── dev/                        #   per-phase implementation specs (development history)
+├── README.md
+├── USER_GUIDE.md                   # daily workflow, setup, CLI reference
+├── 00_ARCHITECTURE.md              # system architecture and design decisions
+└── fidelity_rebalancer/            # Python package
+    ├── accounts.example.json       #   template — copy to accounts.json and fill in yours
+    ├── pyproject.toml
+    ├── engine/                     #   pure calculation logic (no I/O)
+    ├── adapters/                   #   ATP OCR readers, CSV importer, mock ATP
+    ├── state/                      #   Pydantic schema, state import/export, parity diff
+    ├── preflight/                  #   readiness checks, L2-window planner, sanity gate, orchestrator
+    ├── tui/                        #   Textual terminal UI (order approval, live monitor)
+    ├── cli/                        #   CLI entry points (compute, strategy, preflight, compare, progress, eod_report)
+    ├── scripts/                    #   dev/diagnostic utilities (not part of daily workflow)
+    └── tests/                      #   289 unit tests + fixtures
 ```
 
 ---
@@ -72,12 +89,12 @@ SecSurfTrade/
 
 This repository is safe to make public. Sensitive data is kept out of the repo by design:
 
-| Data | Where it lives |
-|---|---|
-| Account names and allocations | `accounts.json` — gitignored, never committed |
-| SectorSurfer credentials | Windows Credential Manager (via OS keyring) — never on disk in plaintext |
-| Fidelity position CSVs | `~/Downloads/` — never committed (`*.csv` gitignored) |
-| Browser session cookies | `.browser_profile/` — gitignored |
+| Data                                     | Where it lives                                                                      |
+| ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| Account names and allocations            | `accounts.json` — gitignored, never committed                                       |
+| SectorSurfer credentials                 | Windows Credential Manager (via OS keyring) — never on disk in plaintext            |
+| Fidelity position CSVs                   | `~/Downloads/` — never committed (`*.csv` gitignored)                               |
+| Browser session cookies                  | `.browser_profile/` — gitignored                                                    |
 | Per-trade detail (tickers, limit prices) | Routed to `logging.DEBUG`, suppressed by default; use `--verbose` on `cli.strategy` |
 
 ---
@@ -88,5 +105,5 @@ This repository is safe to make public. Sensitive data is kept out of the repo b
 cd fidelity_rebalancer
 $env:PYTHONPATH = "."
 python -m pytest tests/ -q
-# Expected: 182 passed
+# Expected: 289 passed
 ```

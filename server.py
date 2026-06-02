@@ -13,6 +13,7 @@ Claude MCP preview server during development sessions).
 Usage (via run.ps1 -- do not start directly):
     python server.py [port]
 """
+
 from __future__ import annotations
 
 import json
@@ -26,13 +27,12 @@ from pathlib import Path
 # ── Yahoo Finance proxy ────────────────────────────────────────────────────────
 
 _YF_URL = (
-    "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-    "?interval=1d&range=5d"
+    "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
 )
 _HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 _CORS_HEADERS = {
-    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 }
@@ -47,10 +47,10 @@ def _fetch_close(ticker: str) -> float | None:
             data = json.loads(resp.read())
         closes = (
             data.get("chart", {})
-                .get("result", [{}])[0]
-                .get("indicators", {})
-                .get("quote", [{}])[0]
-                .get("close", [])
+            .get("result", [{}])[0]
+            .get("indicators", {})
+            .get("quote", [{}])[0]
+            .get("close", [])
         )
         last = next((c for c in reversed(closes) if c is not None), None)
         return round(float(last), 4) if last is not None else None
@@ -61,6 +61,7 @@ def _fetch_close(ticker: str) -> float | None:
 
 
 # ── Request handler ────────────────────────────────────────────────────────────
+
 
 class Handler(BaseHTTPRequestHandler):
     """Minimal handler: /fetch_closes proxy only."""
@@ -82,15 +83,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_fetch_closes(self) -> None:
         try:
-            query   = self.path.split("?", 1)[1] if "?" in self.path else ""
-            params  = urllib.parse.parse_qs(query)
-            raw     = params.get("tickers", [""])[0]
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            params = urllib.parse.parse_qs(query)
+            raw = params.get("tickers", [""])[0]
             tickers = [t.strip() for t in raw.split(",") if t.strip()]
             sys.stderr.write(f"  /fetch_closes tickers={tickers}\n")
             sys.stderr.flush()
 
             closes: dict[str, float] = {}
-            errors: list[str]        = []
+            errors: list[str] = []
 
             for ticker in tickers:
                 price = _fetch_close(ticker)
@@ -110,7 +111,7 @@ class Handler(BaseHTTPRequestHandler):
     def _send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
-        self.send_header("Content-Type",   "application/json")
+        self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         for k, v in _CORS_HEADERS.items():
             self.send_header(k, v)
@@ -124,9 +125,9 @@ class Handler(BaseHTTPRequestHandler):
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port  = int(sys.argv[1]) if len(sys.argv) > 1 else 7824
-    httpd = ThreadingHTTPServer(("", port), Handler)
-    sys.stderr.write(f"Proxy server on port {port}\n")
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 7824
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    sys.stderr.write(f"Proxy server on 127.0.0.1:{port}\n")
     sys.stderr.flush()
     try:
         httpd.serve_forever()

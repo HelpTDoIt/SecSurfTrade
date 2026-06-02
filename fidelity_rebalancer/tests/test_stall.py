@@ -1,6 +1,7 @@
 """
 Tests for engine.stall — stall detection, re-quote math, and end-to-end mock flow.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,7 @@ def _order(
     side: str = "SELL",
 ) -> OrderRow:
     return OrderRow(
-        account="Roth IRA",
+        account="Test Retirement",
         symbol="EEM",
         side=side,
         qty=qty,
@@ -44,8 +45,10 @@ def _order(
 def _quote(bid: float, ask: float, last: float = 0.0) -> QuoteSnapshot:
     return QuoteSnapshot(
         symbol="EEM",
-        bid=bid, bid_size=500,
-        ask=ask, ask_size=500,
+        bid=bid,
+        bid_size=500,
+        ask=ask,
+        ask_size=500,
         last=last or bid,
         prev_close=0.0,
         volume=1_000_000,
@@ -54,6 +57,7 @@ def _quote(bid: float, ask: float, last: float = 0.0) -> QuoteSnapshot:
 
 
 # ── detect_stalls ────────────────────────────────────────────────────────
+
 
 def test_no_stall_when_open():
     orders = [_order("s1", status=OrderStatus.Open)]
@@ -69,16 +73,30 @@ def test_no_stall_when_filled():
 
 def test_no_stall_below_threshold():
     stale_time = _now() - timedelta(seconds=200)
-    orders = [_order("s1", qty=100, filled_qty=50, status=OrderStatus.PartiallyFilled,
-                     last_update_at=stale_time)]
+    orders = [
+        _order(
+            "s1",
+            qty=100,
+            filled_qty=50,
+            status=OrderStatus.PartiallyFilled,
+            last_update_at=stale_time,
+        )
+    ]
     now = _now()
     assert detect_stalls(orders, threshold_seconds=300, now=now) == []
 
 
 def test_stall_at_exact_threshold():
     stale_time = _now() - timedelta(seconds=300)
-    orders = [_order("s1", qty=100, filled_qty=50, status=OrderStatus.PartiallyFilled,
-                     last_update_at=stale_time)]
+    orders = [
+        _order(
+            "s1",
+            qty=100,
+            filled_qty=50,
+            status=OrderStatus.PartiallyFilled,
+            last_update_at=stale_time,
+        )
+    ]
     now = _now()
     stalls = detect_stalls(orders, threshold_seconds=300, now=now)
     assert len(stalls) == 1
@@ -90,8 +108,15 @@ def test_stall_at_exact_threshold():
 
 def test_stall_beyond_threshold():
     stale_time = _now() - timedelta(seconds=600)
-    orders = [_order("s1", qty=1600, filled_qty=800, status=OrderStatus.PartiallyFilled,
-                     last_update_at=stale_time)]
+    orders = [
+        _order(
+            "s1",
+            qty=1600,
+            filled_qty=800,
+            status=OrderStatus.PartiallyFilled,
+            last_update_at=stale_time,
+        )
+    ]
     now = _now()
     stalls = detect_stalls(orders, threshold_seconds=300, now=now)
     assert len(stalls) == 1
@@ -102,8 +127,13 @@ def test_stall_beyond_threshold():
 def test_multiple_orders_only_stalled_flagged():
     t_stale = _now() - timedelta(seconds=400)
     orders = [
-        _order("s1", qty=100, filled_qty=50, status=OrderStatus.PartiallyFilled,
-               last_update_at=t_stale),
+        _order(
+            "s1",
+            qty=100,
+            filled_qty=50,
+            status=OrderStatus.PartiallyFilled,
+            last_update_at=t_stale,
+        ),
         _order("s2", qty=100, filled_qty=0, status=OrderStatus.Open),
         _order("s3", qty=100, filled_qty=100, status=OrderStatus.Filled),
     ]
@@ -114,6 +144,7 @@ def test_multiple_orders_only_stalled_flagged():
 
 # ── recommend_requote — sell side ─────────────────────────────────────────
 
+
 def test_sell_requote_basic():
     """
     sell: original=$62.39, bid=$62.37
@@ -121,7 +152,9 @@ def test_sell_requote_basic():
     candidate orig−5ticks = 62.34
     max(62.38, 62.34) = 62.38
     """
-    stall = StallEvent("s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=312)
+    stall = StallEvent(
+        "s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=312
+    )
     quote = _quote(bid=62.37, ask=62.45)
     sugg = recommend_requote(stall, "sell", quote)
     assert sugg.chunk_id == "s1"
@@ -137,14 +170,18 @@ def test_sell_requote_clamp_5ticks():
     candidate orig−5ticks = 62.34
     max(62.01, 62.34) = 62.34 — clamp wins, don't chase bid too far down
     """
-    stall = StallEvent("s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=400)
+    stall = StallEvent(
+        "s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=400
+    )
     quote = _quote(bid=62.00, ask=62.50)
     sugg = recommend_requote(stall, "sell", quote)
     assert sugg.new_limit == pytest.approx(62.34)
 
 
 def test_sell_requote_rationale_contains_limits():
-    stall = StallEvent("s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=350)
+    stall = StallEvent(
+        "s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=350
+    )
     quote = _quote(bid=62.37, ask=62.45)
     sugg = recommend_requote(stall, "sell", quote)
     combined = " ".join(sugg.rationale)
@@ -154,6 +191,7 @@ def test_sell_requote_rationale_contains_limits():
 
 # ── recommend_requote — buy side ──────────────────────────────────────────
 
+
 def test_buy_requote_basic():
     """
     buy: original=$75.50, ask=$75.53
@@ -161,7 +199,9 @@ def test_buy_requote_basic():
     candidate orig+5ticks = 75.55
     min(75.52, 75.55) = 75.52
     """
-    stall = StallEvent("b1", original_limit=75.50, filled_qty=50, remaining_qty=50, seconds_stalled=310)
+    stall = StallEvent(
+        "b1", original_limit=75.50, filled_qty=50, remaining_qty=50, seconds_stalled=310
+    )
     quote = _quote(bid=75.45, ask=75.53)
     sugg = recommend_requote(stall, "buy", quote)
     assert sugg.new_limit == pytest.approx(75.52)
@@ -174,7 +214,9 @@ def test_buy_requote_clamp_5ticks():
     candidate orig+5ticks = 75.55
     min(75.99, 75.55) = 75.55 — clamp wins, don't chase ask too far up
     """
-    stall = StallEvent("b1", original_limit=75.50, filled_qty=50, remaining_qty=50, seconds_stalled=350)
+    stall = StallEvent(
+        "b1", original_limit=75.50, filled_qty=50, remaining_qty=50, seconds_stalled=350
+    )
     quote = _quote(bid=75.90, ask=76.00)
     sugg = recommend_requote(stall, "buy", quote)
     assert sugg.new_limit == pytest.approx(75.55)
@@ -182,16 +224,25 @@ def test_buy_requote_clamp_5ticks():
 
 # ── MockATP.advance() ────────────────────────────────────────────────────
 
+
 def test_mock_advance_partial_fill():
     mock = MockATP()
     mock.set_quote("EEM", bid=62.37, ask=62.45, last=62.40)
     placed = _now()
-    mock.add_order(OrderRow(
-        account="Roth IRA", symbol="EEM", side="SELL",
-        qty=1600, filled_qty=0, limit_price=62.39,
-        status=OrderStatus.Open,
-        placed_at=placed, last_update_at=placed, order_id="s1",
-    ))
+    mock.add_order(
+        OrderRow(
+            account="Test Retirement",
+            symbol="EEM",
+            side="SELL",
+            qty=1600,
+            filled_qty=0,
+            limit_price=62.39,
+            status=OrderStatus.Open,
+            placed_at=placed,
+            last_update_at=placed,
+            order_id="s1",
+        )
+    )
     mock.advance(seconds=100, fills={"s1": 800})
     orders = mock.get_orders()
     assert orders[0].status == OrderStatus.PartiallyFilled
@@ -203,18 +254,27 @@ def test_mock_advance_partial_fill():
 def test_mock_advance_to_filled():
     mock = MockATP()
     placed = _now()
-    mock.add_order(OrderRow(
-        account="Roth IRA", symbol="EEM", side="SELL",
-        qty=1600, filled_qty=0, limit_price=62.39,
-        status=OrderStatus.Open,
-        placed_at=placed, last_update_at=placed, order_id="s1",
-    ))
+    mock.add_order(
+        OrderRow(
+            account="Test Retirement",
+            symbol="EEM",
+            side="SELL",
+            qty=1600,
+            filled_qty=0,
+            limit_price=62.39,
+            status=OrderStatus.Open,
+            placed_at=placed,
+            last_update_at=placed,
+            order_id="s1",
+        )
+    )
     mock.advance(seconds=60, fills={"s1": 1600})
     orders = mock.get_orders()
     assert orders[0].status == OrderStatus.Filled
 
 
 # ── End-to-end mock scenario ──────────────────────────────────────────────
+
 
 def test_e2e_stall_detect_requote_recompute(tmp_path: Path):
     """
@@ -226,13 +286,25 @@ def test_e2e_stall_detect_requote_recompute(tmp_path: Path):
     - All sells terminal → recompute trigger fires
     """
     from tui.monitor import (
-        Journal, MonitorApp,
-        _all_sells_terminal, _actual_proceeds,
+        Journal,
+        MonitorApp,
+        _all_sells_terminal,
+        _actual_proceeds,
     )
     from state.schema import (
-        AccountInput, BuyAllocationRecord, BuyStrategy, ChunkRecord,
-        Computed, EngineConfig, Inputs, PlanOutput, PositionInput,
-        RebalanceState, SellRecord, SellStrategy, SignalInput,
+        AccountInput,
+        BuyAllocationRecord,
+        BuyStrategy,
+        ChunkRecord,
+        Computed,
+        EngineConfig,
+        Inputs,
+        PlanOutput,
+        PositionInput,
+        RebalanceState,
+        SellRecord,
+        SellStrategy,
+        SignalInput,
     )
     from datetime import timezone
 
@@ -240,42 +312,96 @@ def test_e2e_stall_detect_requote_recompute(tmp_path: Path):
 
     # Build minimal state with 2 sell chunks
     inputs = Inputs(
-        accounts=[AccountInput(
-            name="Roth IRA", type="retirement", cash_reserve=0.0,
-            positions=[PositionInput(symbol="EEM", quantity=1655, price=62.71, value=103805.05)],
-            cash_spaxx=33.88,
-            strategy_allocations={"Prismatic Prudence": 0.20},
-        )],
-        signals=[SignalInput(account="Roth IRA", strategy="Prismatic Prudence",
-                             current_ticker="EEM", new_ticker="EWY")],
+        accounts=[
+            AccountInput(
+                name="Test Retirement",
+                type="retirement",
+                cash_reserve=0.0,
+                positions=[
+                    PositionInput(
+                        symbol="EEM", quantity=1655, price=62.71, value=103805.05
+                    )
+                ],
+                cash_spaxx=33.88,
+                strategy_allocations={"Strategy Alpha": 0.20},
+            )
+        ],
+        signals=[
+            SignalInput(
+                account="Test Retirement",
+                strategy="Strategy Alpha",
+                current_ticker="EEM",
+                new_ticker="EWY",
+            )
+        ],
         config=EngineConfig(stall_threshold_seconds=300),
     )
     sell_chunks = [
-        ChunkRecord(chunk_id="s1", account="Roth IRA", strategy="Prismatic Prudence",
-                    ticker="EEM", idx=0, shares=1600, limit_price=62.39, cost=99824.0),
-        ChunkRecord(chunk_id="s2", account="Roth IRA", strategy="Prismatic Prudence",
-                    ticker="EEM", idx=1, shares=55, limit_price=62.39, cost=3431.45),
+        ChunkRecord(
+            chunk_id="s1",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
+            ticker="EEM",
+            idx=0,
+            shares=1600,
+            limit_price=62.39,
+            cost=99824.0,
+        ),
+        ChunkRecord(
+            chunk_id="s2",
+            account="Test Retirement",
+            strategy="Strategy Alpha",
+            ticker="EEM",
+            idx=1,
+            shares=55,
+            limit_price=62.39,
+            cost=3431.45,
+        ),
     ]
     computed = Computed(
-        cash_ok={"Roth IRA": True},
-        one_share_total={"Roth IRA": 338.0},
-        sells=[SellRecord(account="Roth IRA", strategy="Prismatic Prudence",
-                          ticker="EEM", shares=1655, limit_price=62.39, est_proceeds=103255.45)],
-        buy_allocations=[BuyAllocationRecord(
-            account="Roth IRA", strategy="Prismatic Prudence", ticker="EWY",
-            dollar_target=99889.88, limit_price=75.50, share_target=1323,
-            est_cost=99885.0,
-        )],
+        cash_ok={"Test Retirement": True},
+        one_share_total={"Test Retirement": 338.0},
+        sells=[
+            SellRecord(
+                account="Test Retirement",
+                strategy="Strategy Alpha",
+                ticker="EEM",
+                shares=1655,
+                limit_price=62.39,
+                est_proceeds=103255.45,
+            )
+        ],
+        buy_allocations=[
+            BuyAllocationRecord(
+                account="Test Retirement",
+                strategy="Strategy Alpha",
+                ticker="EWY",
+                dollar_target=99889.88,
+                limit_price=75.50,
+                share_target=1323,
+                est_cost=99885.0,
+            )
+        ],
         sell_chunks=sell_chunks,
         buy_chunks=[],
-        sell_strategies=[SellStrategy(
-            account="Roth IRA", strategy="Prismatic Prudence", ticker="EEM",
-            limit_price=62.39, urgency="normal", rule="default",
-            reasoning=["Spread is 3.2 bps."], chunk_ids=["s1", "s2"],
-        )],
+        sell_strategies=[
+            SellStrategy(
+                account="Test Retirement",
+                strategy="Strategy Alpha",
+                ticker="EEM",
+                limit_price=62.39,
+                urgency="normal",
+                rule="default",
+                reasoning=["Spread is 3.2 bps."],
+                chunk_ids=["s1", "s2"],
+            )
+        ],
     )
     state = RebalanceState(
-        generated_at=placed, generator="engine", inputs=inputs, computed=computed,
+        generated_at=placed,
+        generator="engine",
+        inputs=inputs,
+        computed=computed,
     )
     plan = PlanOutput(generated_at=placed, state=state)
 
@@ -283,16 +409,34 @@ def test_e2e_stall_detect_requote_recompute(tmp_path: Path):
     mock = MockATP()
     mock.set_quote("EEM", bid=62.39, ask=62.42, last=62.41)
 
-    mock.add_order(OrderRow(
-        account="Roth IRA", symbol="EEM", side="SELL",
-        qty=1600, filled_qty=0, limit_price=62.39,
-        status=OrderStatus.Open, placed_at=placed, last_update_at=placed, order_id="s1",
-    ))
-    mock.add_order(OrderRow(
-        account="Roth IRA", symbol="EEM", side="SELL",
-        qty=55, filled_qty=0, limit_price=62.39,
-        status=OrderStatus.Open, placed_at=placed, last_update_at=placed, order_id="s2",
-    ))
+    mock.add_order(
+        OrderRow(
+            account="Test Retirement",
+            symbol="EEM",
+            side="SELL",
+            qty=1600,
+            filled_qty=0,
+            limit_price=62.39,
+            status=OrderStatus.Open,
+            placed_at=placed,
+            last_update_at=placed,
+            order_id="s1",
+        )
+    )
+    mock.add_order(
+        OrderRow(
+            account="Test Retirement",
+            symbol="EEM",
+            side="SELL",
+            qty=55,
+            filled_qty=0,
+            limit_price=62.39,
+            status=OrderStatus.Open,
+            placed_at=placed,
+            last_update_at=placed,
+            order_id="s2",
+        )
+    )
 
     # Step 1: s1 fully fills, s2 partially fills at t+60s
     mock.advance(seconds=60, fills={"s1": 1600, "s2": 30})
@@ -323,10 +467,10 @@ def test_e2e_stall_detect_requote_recompute(tmp_path: Path):
 
     # Step 5: check all sells terminal
     order_map = {row.order_id: row for row in orders_t2}
-    assert _all_sells_terminal("Roth IRA", order_map, ["s1", "s2"])
+    assert _all_sells_terminal("Test Retirement", order_map, ["s1", "s2"])
 
     # Step 6: proceeds computation
-    proceeds = _actual_proceeds("Roth IRA", order_map, ["s1", "s2"])
+    proceeds = _actual_proceeds("Test Retirement", order_map, ["s1", "s2"])
     # s1: 1600 * 62.39 = 99824, s2: 55 * 62.39 = 3431.45
     assert proceeds == pytest.approx(1600 * 62.39 + 55 * 62.39, abs=0.01)
 
@@ -334,6 +478,7 @@ def test_e2e_stall_detect_requote_recompute(tmp_path: Path):
 def test_journal_writes_events(tmp_path: Path):
     """Journal appends valid JSONL with the expected event types."""
     from tui.monitor import Journal
+
     journal_path = tmp_path / "journal.jsonl"
     j = Journal(journal_path)
     j.write("poll", {"order_count": 3, "changed": True})
@@ -353,43 +498,92 @@ def test_monitor_app_renders_status(tmp_path: Path):
     """MonitorApp renders without errors in headless mode."""
     import asyncio
     from state.schema import (
-        AccountInput, BuyAllocationRecord, ChunkRecord, Computed, EngineConfig,
-        Inputs, PlanOutput, PositionInput, RebalanceState, SellRecord,
-        SellStrategy, SignalInput,
+        AccountInput,
+        BuyAllocationRecord,
+        ChunkRecord,
+        Computed,
+        EngineConfig,
+        Inputs,
+        PlanOutput,
+        PositionInput,
+        RebalanceState,
+        SellRecord,
+        SellStrategy,
+        SignalInput,
     )
     from datetime import timezone
 
     placed = datetime(2026, 2, 27, 10, 0, 0, tzinfo=timezone.utc)
     inputs = Inputs(
-        accounts=[AccountInput(
-            name="Roth IRA", type="retirement", cash_reserve=0.0,
-            positions=[PositionInput(symbol="EEM", quantity=1655, price=62.71, value=103805.05)],
-            cash_spaxx=33.88,
-            strategy_allocations={"Prismatic Prudence": 0.20},
-        )],
-        signals=[SignalInput(account="Roth IRA", strategy="Prismatic Prudence",
-                             current_ticker="EEM", new_ticker="EWY")],
+        accounts=[
+            AccountInput(
+                name="Test Retirement",
+                type="retirement",
+                cash_reserve=0.0,
+                positions=[
+                    PositionInput(
+                        symbol="EEM", quantity=1655, price=62.71, value=103805.05
+                    )
+                ],
+                cash_spaxx=33.88,
+                strategy_allocations={"Strategy Alpha": 0.20},
+            )
+        ],
+        signals=[
+            SignalInput(
+                account="Test Retirement",
+                strategy="Strategy Alpha",
+                current_ticker="EEM",
+                new_ticker="EWY",
+            )
+        ],
         config=EngineConfig(stall_threshold_seconds=300),
     )
     computed = Computed(
-        cash_ok={"Roth IRA": True},
-        one_share_total={"Roth IRA": 338.0},
-        sells=[SellRecord(account="Roth IRA", strategy="Prismatic Prudence",
-                          ticker="EEM", shares=1655, limit_price=62.39, est_proceeds=103255.45)],
+        cash_ok={"Test Retirement": True},
+        one_share_total={"Test Retirement": 338.0},
+        sells=[
+            SellRecord(
+                account="Test Retirement",
+                strategy="Strategy Alpha",
+                ticker="EEM",
+                shares=1655,
+                limit_price=62.39,
+                est_proceeds=103255.45,
+            )
+        ],
         buy_allocations=[],
         sell_chunks=[
-            ChunkRecord(chunk_id="s1", account="Roth IRA", strategy="Prismatic Prudence",
-                        ticker="EEM", idx=0, shares=1600, limit_price=62.39, cost=99824.0),
+            ChunkRecord(
+                chunk_id="s1",
+                account="Test Retirement",
+                strategy="Strategy Alpha",
+                ticker="EEM",
+                idx=0,
+                shares=1600,
+                limit_price=62.39,
+                cost=99824.0,
+            ),
         ],
         buy_chunks=[],
-        sell_strategies=[SellStrategy(
-            account="Roth IRA", strategy="Prismatic Prudence", ticker="EEM",
-            limit_price=62.39, urgency="normal", rule="default",
-            reasoning=["Spread is 3.2 bps."], chunk_ids=["s1"],
-        )],
+        sell_strategies=[
+            SellStrategy(
+                account="Test Retirement",
+                strategy="Strategy Alpha",
+                ticker="EEM",
+                limit_price=62.39,
+                urgency="normal",
+                rule="default",
+                reasoning=["Spread is 3.2 bps."],
+                chunk_ids=["s1"],
+            )
+        ],
     )
     state = RebalanceState(
-        generated_at=placed, generator="engine", inputs=inputs, computed=computed,
+        generated_at=placed,
+        generator="engine",
+        inputs=inputs,
+        computed=computed,
     )
     plan = PlanOutput(generated_at=placed, state=state)
 
@@ -405,6 +599,6 @@ def test_monitor_app_renders_status(tmp_path: Path):
             await pilot.pause()
             text = " ".join(str(w.content) for w in app.screen.query("Static"))
             assert "EXECUTION STATUS" in text
-            assert "Roth IRA" in text
+            assert "Test Retirement" in text
 
     asyncio.run(_run())

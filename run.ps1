@@ -20,7 +20,10 @@
     .\run.ps1 -SkipChecks
 #>
 
-param([switch]$SkipChecks)
+param(
+    [switch]$SkipChecks,
+    [switch]$NoLaunch    # start proxy + server but skip opening the browser tab
+)
 
 $ErrorActionPreference = "Continue"
 $ProjectRoot = $PSScriptRoot
@@ -83,7 +86,7 @@ if (-not $SkipChecks) {
         Write-Pass "OK"
     }
 
-    # 4. Chromium browser — write check to temp file to avoid here-string indent rules
+    # 4. Chromium browser - write check to temp file to avoid here-string indent rules
     Write-Step "  Chromium browser ......."
     $tmp = [System.IO.Path]::GetTempFileName() + ".py"
     Set-Content $tmp -Encoding UTF8 -Value @'
@@ -143,7 +146,7 @@ except Exception as e:
             Write-Host "  SectorSurfer credentials not found." -ForegroundColor Yellow
             Write-Host "  Run the scraper once to set them up:" -ForegroundColor DarkGray
             Write-Host "    python scripts\sectorsurfer_signals.py" -ForegroundColor DarkGray
-            Write-Host "  Log in manually in the browser — you will be prompted" -ForegroundColor DarkGray
+            Write-Host "  Log in manually in the browser - you will be prompted" -ForegroundColor DarkGray
             Write-Host "  in the terminal to save credentials securely." -ForegroundColor DarkGray
         }
         Write-Host ""
@@ -166,28 +169,48 @@ Write-Host "  Proxy:       http://localhost:$ProxyPort/fetch_closes" -Foreground
 Write-Host "  Press Ctrl+C to stop." -ForegroundColor DarkGray
 Write-Host ""
 
-# Open the calculator in Chrome. The SectorSurfer scraper manages its own
-# Playwright Chromium browser (persistent profile in .browser_profile/) and
-# does not need to attach to this window.
-$pf86 = [Environment]::GetEnvironmentVariable("PROGRAMFILES(X86)")
-$chromeCandidates = @(
-    "$env:PROGRAMFILES\Google\Chrome\Application\chrome.exe",
-    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe",
-    "$pf86\Google\Chrome\Application\chrome.exe"
-)
-$chrome = $chromeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($chrome) {
-    Start-Process $chrome -ArgumentList "--no-first-run", $url
-    Write-Host "  Chrome:      opened" -ForegroundColor DarkGray
+# Open the calculator in Chrome unless -NoLaunch was passed.
+# The SectorSurfer scraper manages its own Playwright Chromium browser
+# (persistent profile in .browser_profile/) and does not need to attach here.
+if (-not $NoLaunch) {
+    $pf86 = [Environment]::GetEnvironmentVariable("PROGRAMFILES(X86)")
+    $chromeCandidates = @(
+        "$env:PROGRAMFILES\Google\Chrome\Application\chrome.exe",
+        "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe",
+        "$pf86\Google\Chrome\Application\chrome.exe"
+    )
+    $chrome = $chromeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($chrome) {
+        Start-Process $chrome -ArgumentList "--no-first-run", $url
+        Write-Host "  Chrome:      opened" -ForegroundColor DarkGray
+    } else {
+        try { Start-Process $url } catch { }
+        Write-Host "  Chrome not found - opening default browser." -ForegroundColor DarkYellow
+    }
 } else {
-    try { Start-Process $url } catch { }
-    Write-Host "  Chrome not found - opening default browser." -ForegroundColor DarkYellow
+    Write-Host "  Chrome:      skipped (-NoLaunch)" -ForegroundColor DarkGray
 }
 
 Set-Location $ProjectRoot
+# Serve with no-store so the browser never reuses a stale rebalance_calculator.html
+# after an edit (python -m http.server sends no Cache-Control, which lets Chrome
+# heuristically cache the page and silently run old code).
+# Write the server to a temp .py file rather than passing via `python -c`:
+# PowerShell strips the embedded double-quotes when handing a multi-line
+# string to a native exe, which corrupts the source and crashes the server.
+$serveScriptTmp = [System.IO.Path]::GetTempFileName() + ".py"
+Set-Content $serveScriptTmp -Encoding UTF8 -Value @'
+import http.server, sys
+class H(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        super().end_headers()
+http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+'@
 try {
-    & python -m http.server $Port
+    & python $serveScriptTmp $Port
 } finally {
+    Remove-Item $serveScriptTmp -ErrorAction SilentlyContinue
     # Kill proxy when static server exits
     if ($proxy -and -not $proxy.HasExited) {
         $proxy.Kill()

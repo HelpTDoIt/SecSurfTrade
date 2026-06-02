@@ -2,9 +2,9 @@
 
 ## Goals
 
-**Today's interim end state.** A Python *recommendation engine + monitoring component* that reads from ATP (Active Trader Pro) and Fidelity CSV exports, generates trade strategies with full reasoning, presents them via a terminal UI for human approval, and monitors order status in a live polling loop. **The app does not place orders.** The human enters every order manually in ATP. The engine output is validated against the existing React rebalance calculator via a shared JSON state file (calculator-in-the-loop parity testing).
+**Today's interim end state.** A Python _recommendation engine + monitoring component_ that reads from ATP (Active Trader Pro) and Fidelity CSV exports, generates trade strategies with full reasoning, presents them via a terminal UI for human approval, and monitors order status in a live polling loop. **The app does not place orders.** The human enters every order manually in ATP. The engine output is validated against the existing React rebalance calculator via a shared JSON state file (calculator-in-the-loop parity testing).
 
-**Future end state.** The same engine and monitor, with the *execution backend* swappable from "manual entry" → "ATP pre-fill, human submits" (Phase B) → "ATP full automation with kill switch" (Phase C). Engine code does not change between phases. The execution adapter interface is what changes.
+**Future end state.** The same engine and monitor, with the _execution backend_ swappable from "manual entry" → "ATP pre-fill, human submits" (Phase B) → "ATP full automation with kill switch" (Phase C). Engine code does not change between phases. The execution adapter interface is what changes.
 
 ## Architecture
 
@@ -86,9 +86,17 @@ fidelity_rebalancer/
 │   ├── app.py                  # Textual entry point
 │   ├── presenter.py            # plan approval screens
 │   └── monitor.py              # live order monitor view + stall alerts
+├── preflight/                  # morning readiness gate (pure decision logic + interactive shell)
+│   ├── checks.py               # FT+-running + ticker-presence (Watchlist / L2) checks
+│   ├── planner.py              # L2-window plan for thin tickers against the window cap
+│   ├── sanity.py               # pre-trade sanity findings (RED / YELLOW / GREEN)
+│   └── orchestrator.py         # readiness evaluation, sizing-command builder, outcome classifier
 ├── cli/
 │   ├── compute.py              # python -m cli.compute --inputs ... --export state.json
 │   ├── strategy.py             # python -m cli.strategy --state state.json --export state.json
+│   ├── preflight.py            # python -m cli.preflight --state state.json (readiness -> sizing -> sanity)
+│   ├── progress.py             # python -m cli.progress --state state.json (buy fill vs. time-elapsed pace)
+│   ├── eod_report.py           # python -m cli.eod_report --journal logs/journal*.jsonl (post-session summary)
 │   └── compare.py              # python -m cli.compare --engine state.json --calc calc_export.json
 │                               #   --engine: path to engine output JSON (from cli.compute)
 │                               #   --calc:   path to React calc export JSON (from Export State button)
@@ -113,7 +121,7 @@ fidelity_rebalancer/
 
 ## State JSON schema (high level)
 
-The full Pydantic models are in chunk 2 (`02_state_schema_and_compare.md`). High-level shape:
+The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.md`). High-level shape:
 
 ```json
 {
@@ -124,30 +132,41 @@ The full Pydantic models are in chunk 2 (`02_state_schema_and_compare.md`). High
   "inputs": {
     "accounts": [
       {
-        "name": "Roth IRA",
+        "name": "My Retirement",
         "type": "retirement",
         "cash_reserve": 0,
         "positions": [
-          {"symbol": "EEM", "quantity": 1655.0, "price": 62.71,
-           "value": 103805.05, "lot_type": "Cash"}
+          {
+            "symbol": "EEM",
+            "quantity": 1655.0,
+            "price": 62.71,
+            "value": 103805.05,
+            "lot_type": "Cash"
+          }
         ],
         "cash_spaxx": 33.88,
         "strategy_allocations": {
-          "Prismatic Prudence": 0.20,
+          "Strategy Alpha": 0.2,
           "World Try -Top": 0.25
         }
       }
     ],
     "signals": [
-      {"account": "Roth IRA", "strategy": "Prismatic Prudence",
-       "current_ticker": "EEM", "new_ticker": "EWY"}
+      {
+        "account": "My Retirement",
+        "strategy": "Strategy Alpha",
+        "current_ticker": "EEM",
+        "new_ticker": "EWY"
+      }
     ],
     "config": {
       "ex_div_check": true,
       "polling_seconds": 45,
       "stall_threshold_seconds": 300,
-      "chunker": {"max_pct_of_top3_depth": 0.25,
-                  "max_pct_of_5min_volume": 0.15}
+      "chunker": {
+        "max_pct_of_top3_depth": 0.25,
+        "max_pct_of_5min_volume": 0.15
+      }
     }
   },
 
@@ -155,26 +174,41 @@ The full Pydantic models are in chunk 2 (`02_state_schema_and_compare.md`). High
     "cash_ok": true,
     "one_share_total": 412.83,
     "sells": [
-      {"account": "Roth IRA", "strategy": "Prismatic Prudence",
-       "ticker": "EEM", "shares": 1655.0,
-       "limit_price_basis": "prev_close", "est_proceeds": 103805.05}
+      {
+        "account": "My Retirement",
+        "strategy": "Strategy Alpha",
+        "ticker": "EEM",
+        "shares": 1655.0,
+        "limit_price_basis": "prev_close",
+        "est_proceeds": 103805.05
+      }
     ],
     "buy_allocations": [
-      {"account": "Roth IRA", "strategy": "Prismatic Prudence",
-       "ticker": "EWY", "dollar_target": 99889.88, "share_target": 1315}
+      {
+        "account": "My Retirement",
+        "strategy": "Strategy Alpha",
+        "ticker": "EWY",
+        "dollar_target": 99889.88,
+        "share_target": 1315
+      }
     ],
-    "sell_chunks":  [{"chunk_id": "s1", "...": "..."}],
-    "buy_chunks":   [{"chunk_id": "b1", "...": "..."}],
-    "drift": {"before": {"...": "..."}, "after_target": {"...": "..."}}
+    "sell_chunks": [{ "chunk_id": "s1", "...": "..." }],
+    "buy_chunks": [{ "chunk_id": "b1", "...": "..." }],
+    "drift": { "before": { "...": "..." }, "after_target": { "...": "..." } }
   },
 
   "execution_state": {
     "fills": [
-      {"chunk_id": "s1", "filled_shares": 800, "remaining": 800,
-       "avg_price": 62.39, "status": "PartiallyFilled",
-       "last_progress_at": "2026-04-30T09:48:11-04:00"}
+      {
+        "chunk_id": "s1",
+        "filled_shares": 800,
+        "remaining": 800,
+        "avg_price": 62.39,
+        "status": "PartiallyFilled",
+        "last_progress_at": "2026-04-30T09:48:11-04:00"
+      }
     ],
-    "actual_proceeds_by_account": {"Roth IRA": 49912.00}
+    "actual_proceeds_by_account": { "My Retirement": 49912.0 }
   }
 }
 ```
@@ -183,18 +217,18 @@ The full Pydantic models are in chunk 2 (`02_state_schema_and_compare.md`). High
 
 ## Key libraries
 
-| Library | Version | Used for |
-|---|---|---|
-| Python | 3.12+ | language |
-| pywinauto | 0.6.8+ | ATP UIA scraping (read-only today) |
-| pydantic | 2.6+ | state JSON schema validation |
-| pandas | 2.2+ | CSV parsing, drift math |
-| textual | 0.50+ | terminal UI (approval + monitor) |
-| rich | 13.7+ | text formatting |
-| loguru | 0.7+ | structured logging to journal.jsonl |
-| yfinance | 0.2.36+ | quote fallback for off-hours dev/testing only |
-| keyring | 24+ | OS credential storage (Windows Credential Manager) |
-| pytest | latest | test runner |
+| Library   | Version | Used for                                           |
+| --------- | ------- | -------------------------------------------------- |
+| Python    | 3.12+   | language                                           |
+| pywinauto | 0.6.8+  | ATP UIA scraping (read-only today)                 |
+| pydantic  | 2.6+    | state JSON schema validation                       |
+| pandas    | 2.2+    | CSV parsing, drift math                            |
+| textual   | 0.50+   | terminal UI (approval + monitor)                   |
+| rich      | 13.7+   | text formatting                                    |
+| loguru    | 0.7+    | structured logging to journal.jsonl                |
+| yfinance  | 0.2.36+ | quote fallback for off-hours dev/testing only      |
+| keyring   | 24+     | OS credential storage (Windows Credential Manager) |
+| pytest    | latest  | test runner                                        |
 
 **Language**: Python 3.12+ throughout. No build step for the React calculator (continues to use CDN-hosted React/ReactDOM/Babel as today).
 
@@ -224,10 +258,12 @@ The original $100K dollar-based chunking rule is replaced with **book-relative c
 ## Stall detection and re-quote suggestion
 
 A clip is **stalled** when:
+
 - status is `PartiallyFilled`
 - AND `now - last_progress_at >= stall_threshold_seconds` (default 300s / 5 min)
 
 When stalled, the monitor displays:
+
 - the original limit and the current bid/ask/spread
 - the recommended new limit (sell side: bid+1¢ at the new bid; buy side: ask−1¢ at the new ask)
 - the remaining shares
@@ -253,14 +289,14 @@ The monitor polls ATP Orders every **30–60 seconds** (configurable, default 45
 
 Each chunk is a separate Claude Code prompt file. Each is independently runnable, has acceptance criteria, and includes its own tests. Order matters where dependencies exist.
 
-| # | File | Scope | Depends on | Suggested model |
-|---|------|-------|------------|-----------------|
-| 1 | `01_calculator_port.md` | Port React calculator to Python engine; regression tests | none | Sonnet 4.6 |
-| 2 | `02_state_schema_and_compare.md` | Full JSON schema; `compute` + `compare` CLIs; React Export + Import State buttons | 1 | Sonnet 4.6 | **Complete.** Schema, `compute`, `compare` CLIs, Export State button, and Import State button all done. |
-| 3 | `03_atp_read_only.md` | pywinauto adapters: quote, L2, Orders panel; mock ATP | none (parallel-safe) | Sonnet 4.6 |
-| 4 | `04_strategy_generator.md` | Sell/buy strategy with reasoning; book-relative chunker; ex-div check | 1, 3 | Opus 4.7 |
-| 5 | `05_tui_presenter.md` | Textual approval flow | 4 | Sonnet 4.6 |
-| 6 | `06_monitor_loop.md` | 30–60s polling, stall detection, re-quote suggestion | 3 | Sonnet 4.6 |
+| #   | File                                      | Scope                                                                             | Depends on           | Suggested model |
+| --- | ----------------------------------------- | --------------------------------------------------------------------------------- | -------------------- | --------------- | ------------------------------------------------------------------------------------------------------- |
+| 1   | `docs/dev/01_calculator_port.md`          | Port React calculator to Python engine; regression tests                          | none                 | Sonnet 4.6      |
+| 2   | `docs/dev/02_state_schema_and_compare.md` | Full JSON schema; `compute` + `compare` CLIs; React Export + Import State buttons | 1                    | Sonnet 4.6      | **Complete.** Schema, `compute`, `compare` CLIs, Export State button, and Import State button all done. |
+| 3   | `docs/dev/03_atp_read_only.md`            | pywinauto adapters: quote, L2, Orders panel; mock ATP                             | none (parallel-safe) | Sonnet 4.6      |
+| 4   | `docs/dev/04_strategy_generator.md`       | Sell/buy strategy with reasoning; book-relative chunker; ex-div check             | 1, 3                 | Opus 4.7        |
+| 5   | `docs/dev/05_tui_presenter.md`            | Textual approval flow                                                             | 4                    | Sonnet 4.6      |
+| 6   | `docs/dev/06_monitor_loop.md`             | 30–60s polling, stall detection, re-quote suggestion                              | 3                    | Sonnet 4.6      |
 
 Recommended execution order: **1 → 2 → 3 → 4 → 5 → 6**. If you have a second window, chunk 3 can run in parallel with chunks 1–2.
 
@@ -270,7 +306,6 @@ Recommended execution order: **1 → 2 → 3 → 4 → 5 → 6**. If you have a 
 - React calculator **Import** State button — built; restores positions/signals/closes from a state JSON
 - Live bidirectional sync between engine and React calc (re-export to checkpoint)
 - Account-level kill-switch hotkey (no orders being placed by the app)
-- Formatted post-session trade journal reports (events are logged but not formatted)
 - Positions scraping from ATP (CSV import is the source of truth today)
 - Phase B order pre-fill — even though the architecture supports it, no execution adapter beyond "print to terminal" is built today
 
@@ -285,15 +320,15 @@ Recommended execution order: **1 → 2 → 3 → 4 → 5 → 6**. If you have a 
 
 This repo is designed to be safe to make public. Key controls:
 
-| Concern | Control |
-|---|---|
-| Real account names | Stored in `accounts.json` (gitignored). Committed template is `accounts.example.json` with placeholder names. |
-| SectorSurfer credentials | Stored in the OS keyring (Windows Credential Manager via DPAPI). Never written to disk in plaintext. `run.ps1` checks for stored credentials on startup and prints instructions to run the scraper once if none are found — credential entry happens entirely in Python via `getpass`. |
-| Per-trade detail (tickers, limit prices) | `cli.strategy` routes these to `logging.DEBUG`, suppressed by default. Use `--verbose` / `-v` to show on stderr. |
-| Audit journal | `logs/journal.jsonl` is created with `mode=0o600` (owner-read/write only). The `logs/` directory is gitignored. |
-| API key | `ANTHROPIC_API_KEY` read from env var only — never in source. |
-| Fidelity position CSVs | `fidelity_rebalancer/csvs/` and `~/Downloads/*.csv` — never committed (`*.csv` not in repo). |
-| Session cookies | `.browser_profile/` is gitignored. |
+| Concern                                  | Control                                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Real account names                       | Stored in `accounts.json` (gitignored). Committed template is `accounts.example.json` with placeholder names.                                                                                                                                                                          |
+| SectorSurfer credentials                 | Stored in the OS keyring (Windows Credential Manager via DPAPI). Never written to disk in plaintext. `run.ps1` checks for stored credentials on startup and prints instructions to run the scraper once if none are found — credential entry happens entirely in Python via `getpass`. |
+| Per-trade detail (tickers, limit prices) | `cli.strategy` routes these to `logging.DEBUG`, suppressed by default. Use `--verbose` / `-v` to show on stderr.                                                                                                                                                                       |
+| Audit journal                            | `logs/journal.jsonl` is created with `mode=0o600` (owner-read/write only). The `logs/` directory is gitignored.                                                                                                                                                                        |
+| API key                                  | `ANTHROPIC_API_KEY` read from env var only — never in source.                                                                                                                                                                                                                          |
+| Fidelity position CSVs                   | `fidelity_rebalancer/csvs/` and `~/Downloads/*.csv` — never committed (`*.csv` not in repo).                                                                                                                                                                                           |
+| Session cookies                          | `.browser_profile/` is gitignored.                                                                                                                                                                                                                                                     |
 
 ## Current status
 
@@ -304,3 +339,11 @@ All six chunks are complete. The parity gate in the Definition of Done is now un
 3. Iterate engine until zero diffs. Once clean, the engine is the source of truth.
 
 **Import State** (`rebalance_calculator.html` → Setup tab → Import State button) loads a previously exported state JSON back into the calculator — restoring positions, signals, and prev closes — so you can resume a session or cross-check without re-entering CSV data.
+
+### Daily-workflow tooling added on top of the six chunks
+
+Built after the original chunks, these wrap the engine in a guided trading-day flow (all read-only — the app still never places orders):
+
+- **Morning preflight** (`preflight/` package + `cli.preflight`) — an interactive pre-market readiness gate. It confirms Fidelity Trader+ is running with every needed ticker in the Watchlist and an L2 window open for each thin ticker (against the FT+ window cap), then sizes the orders from live FT+ data. On an OCR shortfall it pauses and requires an explicit `yes` before any yfinance fallback that sizes without live L2 depth — there is no silent auto-fallback. It finishes with the pre-trade sanity gate (RED blocks, YELLOW pauses, GREEN proceeds). Decision logic lives in `preflight.checks` / `.planner` / `.sanity` / `.orchestrator` (unit-tested); `cli.preflight` is the thin interactive shell.
+- **Buy progress tracker** (`cli.progress`) — compares buy fill completion against elapsed trading time and flags buys behind schedule.
+- **EOD trade-journal report** (`cli.eod_report`) — formats the append-only `logs/journal*.jsonl` audit log into a post-session summary (session span in local time, event tally, notable-events timeline, poll-error warnings). Schema-tolerant: it skips and counts malformed lines, reports unreadable files distinctly, and surfaces unknown/future event types rather than dropping them.
