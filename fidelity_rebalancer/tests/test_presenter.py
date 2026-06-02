@@ -115,6 +115,33 @@ async def test_full_approval_writes_json_and_txt(tmp_path: Path):
 
 
 @pytest.mark.anyio
+async def test_txt_includes_pricing_reasoning(tmp_path: Path):
+    """The TXT checklist surfaces the engine's reasoning bullets (G-1/B-2).
+
+    Each approved strategy's `why (<rule>):` header and its reasoning bullets
+    must appear so the human can audit *why* the limit was chosen before
+    entering the order in ATP.
+    """
+    app = _make_app(tmp_path)
+    async with app.run_test(headless=True, size=(120, 40)) as pilot:
+        await pilot.pause()
+        for _ in range(3):
+            await pilot.press("a")
+            await pilot.pause()
+
+    txts = list((tmp_path / "plans").glob("plan_*.txt"))
+    assert len(txts) >= 1
+    txt = txts[0].read_text(encoding="utf-8")
+
+    # Rule-tagged rationale header is present for the approved sell strategy.
+    assert "why (tight_spread_small_position):" in txt
+    # And the actual bullet text (the spread bullet always appears).
+    assert "- Spread is 3.2 bps." in txt
+    # Bullets are indented beneath their order lines, not bare order rows.
+    assert "        - LIMIT at midpoint $62.3900." in txt
+
+
+@pytest.mark.anyio
 async def test_skip_excludes_from_txt(tmp_path: Path):
     """Skipped strategy appears in JSON as 'skipped' but not in TXT."""
     app = _make_app(tmp_path)

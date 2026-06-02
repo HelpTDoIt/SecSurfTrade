@@ -5,6 +5,7 @@ Usage (from SecSurfTrade/ or fidelity_rebalancer/):
     python -m fidelity_rebalancer.tui.app --plan <state_json>
     python -m tui.app --plan <state_json> --resume <partial_plan_json>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,6 +36,7 @@ from tui.presenter import PresenterScreen
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
+
 def _build_chunk_lookup(state: RebalanceState) -> dict[str, ChunkRecord]:
     lookup: dict[str, ChunkRecord] = {}
     for ch in state.computed.sell_chunks:
@@ -48,7 +50,9 @@ def _build_record_lookup(
     state: RebalanceState,
 ) -> tuple[dict[str, SellRecord], dict[str, BuyAllocationRecord]]:
     sells = {(r.account, r.strategy, r.ticker): r for r in state.computed.sells}
-    buys = {(r.account, r.strategy, r.ticker): r for r in state.computed.buy_allocations}
+    buys = {
+        (r.account, r.strategy, r.ticker): r for r in state.computed.buy_allocations
+    }
     return sells, buys
 
 
@@ -98,6 +102,14 @@ def _make_txt_line(
             f"    ({strategy.strategy}, chunk {ch.chunk_id})"
         )
         lines.append(line)
+    # Surface the engine's pricing rationale (G-1/B-2): the reasoning bullets
+    # are computed per strategy but were previously DEBUG-only / TUI-only. Carry
+    # them into the printed checklist so the human can audit *why* each limit
+    # was chosen before entering the order in ATP.
+    if lines and getattr(strategy, "reasoning", None):
+        lines.append(f"      why ({strategy.rule}):")
+        for bullet in strategy.reasoning:
+            lines.append(f"        - {bullet}")
     return "\n".join(lines)
 
 
@@ -122,7 +134,7 @@ def _save_plan(
 
     # TXT checklist + fills CSV template (one row per chunk, approved strategies only)
     txt_lines: list[str] = []
-    fills_rows: list[str] = ['Account,Side,Strategy,FillPrice,FillShares']
+    fills_rows: list[str] = ["Account,Side,Strategy,FillPrice,FillShares"]
     chunk_lookup = _build_chunk_lookup(state)
     for decision in decisions:
         if decision.approval_status == "skipped":
@@ -135,7 +147,10 @@ def _save_plan(
             strat = state.computed.buy_strategies[idx]
         chunks = [chunk_lookup[cid] for cid in strat.chunk_ids if cid in chunk_lookup]
         line = _make_txt_line(
-            decision, side, strat, chunks,
+            decision,
+            side,
+            strat,
+            chunks,
             decision.approved_limit_price,
             decision.approved_order_type,
         )
@@ -147,7 +162,7 @@ def _save_plan(
         for ch in chunks:
             fills_rows.append(
                 f'"{strat.account}","{side_label}","{strat.strategy}",'
-                f'{fill_price:.4f},{ch.shares:.0f}'
+                f"{fill_price:.4f},{ch.shares:.0f}"
             )
 
     txt_path.write_text("\n".join(txt_lines) + "\n", encoding="utf-8")
@@ -156,6 +171,7 @@ def _save_plan(
 
 
 # ── App ───────────────────────────────────────────────────────────────────
+
 
 class RebalanceApp(App):
     """Approval wizard — presents each strategy for human sign-off."""
@@ -248,6 +264,7 @@ class RebalanceApp(App):
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
