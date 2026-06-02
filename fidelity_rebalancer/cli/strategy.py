@@ -155,6 +155,65 @@ def _detect_thin_tickers(
     return sorted(thin, key=lambda t: t[2], reverse=True)
 
 
+# Max number of tickers to fetch L2 for in auto-detect mode. ATP shows a
+# limited number of L2 panels at once (~7 fit on the right-hand side), so we
+# spend that budget on the highest-impact orders.
+_L2_PANEL_CAP = 7
+
+
+def _rank_l2_candidates(
+    sells: list,
+    buys: list,
+    watchlist: dict[str, WatchlistRow],
+) -> list[tuple[str, float]]:
+    """Rank every order ticker by its largest order size as % of 10-day ADV.
+
+    Returns [(ticker, pct_of_adv)] sorted high → low. This is the priority for
+    L2 attention: the bigger an order is relative to daily volume, the more its
+    fill quality depends on real book depth (book-relative chunking) rather than
+    the ADV-only POV estimate. Tickers with no ADV get pct 0.0 (lowest priority).
+    """
+    pct_by_tkr: dict[str, float] = {}
+
+    def _consider(ticker: str, qty: float) -> None:
+        row = watchlist.get(ticker)
+        pct = 0.0
+        if row and getattr(row, "avg_vol_10d", 0) and qty > 0:
+            pct = qty / row.avg_vol_10d * 100.0
+        if pct > pct_by_tkr.get(ticker, -1.0):
+            pct_by_tkr[ticker] = pct
+
+    for s in sells:
+        _consider(s.ticker, float(s.shares))
+    for b in buys:
+        _consider(b.ticker, float(b.share_target))
+    return sorted(pct_by_tkr.items(), key=lambda kv: kv[1], reverse=True)
+
+
+def _select_l2_symbols(
+    ranked_syms: list[str],
+    open_panels: set[str],
+    cap: int = _L2_PANEL_CAP,
+) -> tuple[list[str], list[str]]:
+    """Decide which tickers to fetch L2 for, and which panels to recommend opening.
+
+    `ranked_syms` is the ticker priority (high → low, from _rank_l2_candidates).
+    `open_panels` is the set of L2 panels currently open in ATP.
+
+    Returns (use, recommend_open):
+      use            — the up-to-`cap` highest-priority tickers whose panel is
+                       OPEN (only these can be fetched without an OCR failure).
+      recommend_open — the highest-priority tickers (within the top-`cap` slots)
+                       whose panel is NOT open; the human should open these for
+                       better chunking, then re-run.
+    """
+    priority = ranked_syms[:cap]
+    open_up = {s.upper() for s in open_panels}
+    use = [t for t in priority if t.upper() in open_up]
+    recommend_open = [t for t in priority if t.upper() not in open_up]
+    return use, recommend_open
+
+
 def _rechunk_sell_pov(
     sell, strat, *, adv, spread_bps, sigma_bps=_DAILY_SIGMA_BPS
 ) -> tuple[list[ChunkRecord], dict]:
@@ -314,6 +373,50 @@ def _adjust_buy_budgets(state, confirmed: dict[str, float]) -> None:
         )
 
 
+def _reconcile_records_to_chunks(state) -> None:
+    """Make each buy/sell record reflect the sum of its (re-priced) chunks.
+
+    cli.compute sizes records at prev-close; cli.strategy then regenerates the
+    chunks at live ATP prices (and floors sells to whole shares).  That leaves
+    the record share/limit/cost out of step with the chunks — a guaranteed
+    CHUNK_SUM_MISMATCH whenever the live price != prev close, and a misleading
+    record even when it isn't.  Python is the source of truth and the chunks
+    are what actually get entered, so the record is reconciled DOWN to its
+    chunks here.
+
+    A record with a non-zero target but *no* chunks is left untouched, so the
+    sanity gate still flags that genuinely-broken case.
+    """
+    from collections import defaultdict
+
+    def _agg(chunks):
+        shares: dict = defaultdict(float)
+        cost: dict = defaultdict(float)
+        limit: dict = {}
+        for c in chunks:
+            k = (c.account, c.strategy, c.ticker)
+            shares[k] += c.shares
+            cost[k] += c.cost
+            limit.setdefault(k, c.limit_price)  # chunks share one limit per ticker
+        return shares, cost, limit
+
+    s_shares, s_cost, s_limit = _agg(state.computed.sell_chunks)
+    for s in state.computed.sells:
+        k = (s.account, s.strategy, s.ticker)
+        if k in s_shares:
+            s.shares = round(s_shares[k], 6)
+            s.limit_price = s_limit[k]
+            s.est_proceeds = round(s_cost[k], 2)
+
+    b_shares, b_cost, b_limit = _agg(state.computed.buy_chunks)
+    for b in state.computed.buy_allocations:
+        k = (b.account, b.strategy, b.ticker)
+        if k in b_shares:
+            b.share_target = int(round(b_shares[k]))
+            b.limit_price = b_limit[k]
+            b.est_cost = round(b_cost[k], 2)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate strategies from engine state JSON (adds to state in-place)"
@@ -336,7 +439,8 @@ def main() -> None:
         default=None,
         metavar="SYM",
         help="Symbols to fetch Level 2 depth via OCR (requires ATP open with L2 panels). "
-        "Pass without arguments to auto-detect thin tickers.",
+        f"Pass without arguments to auto-detect: use the L2 panels currently open "
+        f"in ATP, spent on the highest-impact orders (up to {_L2_PANEL_CAP}, ranked by %%ADV).",
     )
     parser.add_argument(
         "--confirmed-proceeds",
@@ -412,14 +516,43 @@ def main() -> None:
             print(f"  ⚠ {side:4s} {sym:6s}  {pct:.1f}% of ADV — open L2 window in ATP")
     thin_syms = {t[0] for t in thin}
 
-    # Level 2 depth data: fetch via OCR for requested or auto-detected thin tickers
+    # Level 2 depth data: fetch via OCR.
+    #   --l2-symbols SYM ...  -> exactly those tickers (explicit; user's call).
+    #   --l2-symbols          -> AUTO-DETECT: use the L2 panels currently open in
+    #                            ATP, spent on the highest-impact orders (cap 7).
+    #                            Panels that aren't open are skipped (so we never
+    #                            trip the strict-ATP OCR-failure abort on a closed
+    #                            panel) but recommended to the human to open.
     l2_cache: dict[str, Level2Snapshot] = {}
     l2_symbols: set[str] = set()
     if args.l2_symbols is not None:
         if args.l2_symbols:
             l2_symbols = {s.upper() for s in args.l2_symbols}
         else:
-            l2_symbols = thin_syms
+            from adapters.atp_ocr import enumerate_l2_symbols
+
+            open_panels = {s.upper() for s in enumerate_l2_symbols()}
+            ranked = _rank_l2_candidates(
+                state.computed.sells, state.computed.buy_allocations, watchlist
+            )
+            use, recommend_open = _select_l2_symbols(
+                [t for t, _ in ranked], open_panels, cap=_L2_PANEL_CAP
+            )
+            l2_symbols = {s.upper() for s in use}
+            print(
+                "Auto-detect L2: open panels = "
+                + (", ".join(sorted(open_panels)) if open_panels else "none")
+            )
+            print(
+                f"  Using L2 for (top {_L2_PANEL_CAP} by %ADV, panel open): "
+                + (", ".join(use) if use else "none")
+            )
+            if recommend_open:
+                print(
+                    "  ⚠ Higher-impact tickers WITHOUT an open L2 panel "
+                    "(open these in ATP + re-run for better chunking; "
+                    "they fall back to POV sizing): " + ", ".join(recommend_open)
+                )
     if l2_symbols:
         from adapters.atp_ocr import OCRLevel2Adapter
 
@@ -640,6 +773,12 @@ def main() -> None:
     state.computed.buy_strategies = buy_strategies
     state.computed.sell_chunks = all_sell_chunks
     state.computed.buy_chunks = all_buy_chunks
+
+    # Records were sized at prev-close by cli.compute; chunks above are re-priced
+    # at live ATP (and sells floored to whole shares).  Reconcile the records DOWN
+    # to their chunks so Python stays internally consistent — the chunks are what
+    # actually get entered, so they are the source of truth.
+    _reconcile_records_to_chunks(state)
 
     save_state(state, resolve_output_path(args.export))
     print(

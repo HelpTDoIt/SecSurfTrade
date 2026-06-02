@@ -31,6 +31,7 @@ $ProxyPort   = 7824
 $ProxyUrl    = "http://localhost:$ProxyPort/fetch_closes?tickers=SPY"
 
 function Write-Step  { param($n, $msg) Write-Host "" ; Write-Host "  [$n] $msg" -ForegroundColor Cyan }
+function Write-Ref   { param($msg)     Write-Host "      USER_GUIDE: $msg" -ForegroundColor DarkGray }
 function Write-Pass  { param($msg)     Write-Host "      OK  $msg" -ForegroundColor Green }
 function Write-Warn  { param($msg)     Write-Host "      WARN $msg" -ForegroundColor Yellow }
 function Bail        { param($msg)     Write-Host "" ; Write-Host "  ERROR: $msg" -ForegroundColor Red ; exit 1 }
@@ -42,6 +43,7 @@ Write-Host "  ------------------------------------" -ForegroundColor DarkGray
 # -- Step 1: SectorSurfer signals ----------------------------------------------
 
 Write-Step 1 "SectorSurfer signals"
+Write-Ref "Sec 4, Step 1 - Get SectorSurfer signals (scripts/sectorsurfer_signals.py)"
 
 $rescrape = $true
 if (Test-Path $SignalsFile) {
@@ -66,6 +68,7 @@ if ($rescrape) {
 # -- Step 2: Validate config ---------------------------------------------------
 
 Write-Step 2 "Validate config"
+Write-Ref "Sec 6 - scripts/validate_config.py (accounts.json + signals.json)"
 & python "$ProjectRoot\scripts\validate_config.py" `
     --accounts "$FRDir\accounts.json" `
     --signals  $SignalsFile
@@ -75,6 +78,7 @@ Write-Pass "accounts.json + signals.json valid"
 # -- Step 3: Wait for today's Fidelity CSVs -----------------------------------
 
 Write-Step 3 "Fidelity position CSVs"
+Write-Ref "Sec 4, Step 2 - Download Fidelity CSVs (3 accounts -> Downloads)"
 
 function Get-TodayCSVs {
     $today = (Get-Date).Date
@@ -106,9 +110,42 @@ if (-not $csvs) {
 $csvNames = ($csvs | ForEach-Object { $_.Name }) -join ", "
 Write-Pass "$($csvs.Count) CSV(s) found: $csvNames"
 
+# Duplicate-download guard: browsers append " (1)", " (2)", ... to repeat
+# downloads. cli.compute ingests every CSV in Downloads, so a stray copy can
+# double-count a position. Strip the " (n)" suffix, group, and warn on any
+# collision (e.g. Portfolio_Positions_May-31-2026 + ...(1)..(5)).
+$dupGroups = $csvs |
+    Group-Object { $_.BaseName -replace '\s*\(\d+\)$', '' } |
+    Where-Object { $_.Count -gt 1 }
+if ($dupGroups) {
+    Write-Host ""
+    Write-Warn "Possible duplicate position CSVs in Downloads (same file downloaded more than once):"
+    foreach ($g in $dupGroups) {
+        $dupNames = ($g.Group | ForEach-Object { $_.Name }) -join ", "
+        Write-Host "        $($g.Name): $dupNames" -ForegroundColor Yellow
+    }
+    Write-Host "      cli.compute reads EVERY CSV here - duplicates can double-count positions." -ForegroundColor DarkGray
+    $ans = Read-Host "      Delete the older duplicate copies now, keeping the newest of each? [y/N]"
+    if ($ans -match "^[yY]") {
+        foreach ($g in $dupGroups) {
+            $g.Group | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 |
+                ForEach-Object {
+                    Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+                    Write-Host "        Removed $($_.Name)" -ForegroundColor DarkYellow
+                }
+        }
+        $csvs = Get-TodayCSVs
+        $csvNames = ($csvs | ForEach-Object { $_.Name }) -join ", "
+        Write-Pass "$($csvs.Count) CSV(s) after dedupe: $csvNames"
+    } else {
+        Write-Warn "Keeping duplicates. Verify cli.compute position counts before trading."
+    }
+}
+
 # -- Step 4: Compute trade plan ------------------------------------------------
 
 Write-Step 4 "Compute trade plan (cli.compute)"
+Write-Ref "Sec 4, Step 3 - Compute the trade plan (cli.compute -> state.json)"
 
 if (Test-Path $StateFile) {
     $stateAge = (Get-Date) - (Get-Item $StateFile).LastWriteTime
@@ -132,6 +169,7 @@ Write-Pass "state.json written: $StateFile"
 # -- Step 5: Order-sizing preflight (opt-in) ----------------------------------
 
 Write-Step 5 "Order-sizing preflight (FT+ readiness -> sizing -> sanity gate)"
+Write-Ref "Sec 6 - cli.preflight --state state.json (readiness, sizing, sanity gate)"
 Write-Host "      Requires Fidelity Trader+ open with the Watchlist + L2 windows." -ForegroundColor DarkGray
 $runPreflight = Read-Host "      Run order-sizing preflight now? [Y/n]"
 if ($runPreflight -notmatch "^[nN]") {
@@ -139,7 +177,9 @@ if ($runPreflight -notmatch "^[nN]") {
     $env:PYTHONPATH = $FRDir
     Push-Location $FRDir
     try {
-        & python -m cli.preflight --state $StateFile
+        # --no-next-steps: morning-prep prints ONE consolidated next-steps block
+        # at the very end (Step 7), so preflight must not print its own mid-run.
+        & python -m cli.preflight --state $StateFile --no-next-steps
         $preflightExit = $LASTEXITCODE
     } finally {
         Pop-Location
@@ -159,6 +199,7 @@ if ($runPreflight -notmatch "^[nN]") {
 # -- Step 6: Start Yahoo proxy / static server if not running -----------------
 
 Write-Step 6 "Yahoo Finance proxy + static server"
+Write-Ref "Sec 2 - Launch the app (run.ps1: proxy on 7824, calculator on 7823)"
 
 
 # Evict any stale Python processes holding our ports from previous runs.
@@ -179,7 +220,7 @@ function Clear-Port {
     }
 }
 
-# TCP-level port check — avoids hitting /fetch_closes (which calls Yahoo and
+# TCP-level port check - avoids hitting /fetch_closes (which calls Yahoo and
 # can take 1-3s, longer than any reasonable HTTP timeout).
 function Test-Port {
     param([int]$p)
@@ -191,31 +232,33 @@ function Test-Port {
     } catch { return $false } finally { $tcp.Close() }
 }
 
-$proxyRunning = Test-Port $ProxyPort
+# Launch the app EXACTLY like the manual workflow: open a 2nd PowerShell window
+# and run .\run.ps1 (no flags). run.ps1 starts the proxy, the static server, AND
+# opens Chrome on the calculator - all in one place. Doing this unconditionally
+# (instead of trying to detect an already-running server and skip) is what keeps
+# the calculator opening reliably: the old skip-if-port-busy check only probed
+# the proxy port 7824, so a half-running state (7824 held, 7823 dead) made the
+# script think all was well and open Chrome to a server that wasn't there.
+#
+# Clear any stale python servers on our ports first so run.ps1 can bind cleanly.
+Clear-Port $ProxyPort
+Clear-Port $Port
+Write-Host "      Opening server window (cd <root>; .\run.ps1)..." -ForegroundColor DarkGray
+# -NoExit keeps the window open if anything fails so we can read the error.
+$cmd = "Set-Location '$ProjectRoot'; .\run.ps1"
+Start-Process powershell `
+    -ArgumentList "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $cmd `
+    -WindowStyle Normal
 
-if ($proxyRunning) {
-    Write-Pass "Proxy already running on port $ProxyPort"
-} else {
-    Clear-Port $ProxyPort
-    Clear-Port $Port
-    Write-Host "      Opening server window (cd <root>; .\run.ps1)..." -ForegroundColor DarkGray
-    # Mirror the manual workflow exactly: cd to project root, then .\run.ps1
-    # with no flags. run.ps1 handles checks, proxy, static server, and Chrome.
-    # -NoExit keeps the window open if anything fails so we can read the error.
-    $cmd = "Set-Location '$ProjectRoot'; .\run.ps1"
-    Start-Process powershell `
-        -ArgumentList "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $cmd `
-        -WindowStyle Normal
-
-    # Poll TCP port until proxy is listening (60s timeout — run.ps1 does ~5s of checks first)
-    $deadline = (Get-Date).AddSeconds(60)
-    while (-not $proxyRunning -and (Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 500
-        $proxyRunning = Test-Port $ProxyPort
-    }
-    if (-not $proxyRunning) { Bail "Proxy did not start within 60 seconds. Check the server window." }
-    Write-Pass "Proxy + static server running (port $ProxyPort / $Port)"
+# Poll TCP port until proxy is listening (60s timeout - run.ps1 does ~5s of checks first)
+$proxyRunning = $false
+$deadline = (Get-Date).AddSeconds(60)
+while (-not $proxyRunning -and (Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 500
+    $proxyRunning = Test-Port $ProxyPort
 }
+if (-not $proxyRunning) { Bail "Proxy did not start within 60 seconds. Check the server window." }
+Write-Pass "Proxy + static server running (port $ProxyPort / $Port). Chrome opened by run.ps1."
 
 # -- Step 7: Summary -----------------------------------------------------------
 
@@ -235,7 +278,14 @@ Write-Host "  CSVs     : $($csvs.Count) file(s) - $csvNames" -ForegroundColor Wh
 Write-Host "  State    : $StateFile" -ForegroundColor White
 Write-Host "  URL      : http://localhost:$Port/rebalance_calculator.html" -ForegroundColor White
 Write-Host ""
-Write-Host "  Chrome should already be open (launched by run.ps1)." -ForegroundColor DarkGray
-Write-Host "  In the calculator, click Import State and select:" -ForegroundColor DarkGray
-Write-Host "    $StateFile" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  Next steps (manual order entry - the app never places orders):" -ForegroundColor White
+Write-Host "    1. In the calculator (Chrome should be open), click Import State and select:" -ForegroundColor DarkGray
+Write-Host "         $StateFile" -ForegroundColor DarkGray
+Write-Host "    2. Enter each order manually in Fidelity Trader+, the sized chunks in order:" -ForegroundColor DarkGray
+Write-Host "       sells first, then buys, following the limit prices in the sized state." -ForegroundColor DarkGray
+Write-Host "    3. After fills, run the EOD report to capture the session:" -ForegroundColor DarkGray
+Write-Host "         Set-Location '$FRDir'; `$env:PYTHONPATH = '.'; python -m cli.eod_report" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  Full daily workflow: see Section 3 of USER_GUIDE.md" -ForegroundColor DarkGray
 Write-Host ""

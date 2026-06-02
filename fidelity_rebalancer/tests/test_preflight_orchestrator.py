@@ -12,10 +12,14 @@ from adapters import WatchlistRow
 from cli.strategy import OCR_SHORTFALL_EXIT, OCR_SHORTFALL_MARKER
 from preflight.checks import FtRunningResult, TickerPresenceResult
 from preflight.orchestrator import (
+    L2PriorityGuidance,
     ReadinessReport,
+    WatchlistGuidance,
     build_sizing_command,
     classify_sizing_outcome,
+    evaluate_l2_priorities,
     evaluate_readiness,
+    evaluate_watchlist,
     extra_sanity_warnings,
 )
 from preflight.planner import L2WindowPlan, plan_l2_windows
@@ -169,6 +173,34 @@ def test_missing_l2_tickers_not_ready_with_lines():
     assert "Open an L2 window for DFEN" in joined
 
 
+def test_watchlist_and_l2_messages_are_distinct():
+    # The two requirements must read as clearly different statements.
+    ft = FtRunningResult(running=True, detail="ok")
+    presence = make_presence(ok=False, missing_watchlist=["DFEN"], missing_l2=["DFEN"])
+    plan = plan_l2_windows(["DFEN"], [("DFEN", 4.0)])
+    report = evaluate_readiness(ft, presence, plan)
+    wl_lines = [i for i in report.instructions if "Watchlist" in i and "Add DFEN" in i]
+    l2_lines = [i for i in report.instructions if "L2 window for DFEN" in i]
+    assert len(wl_lines) == 1
+    assert len(l2_lines) == 1
+    # Distinct wording, and each names which list it is about.
+    assert wl_lines[0] != l2_lines[0]
+    assert "missing from Watchlist" in wl_lines[0]
+    assert "missing from L2" in l2_lines[0]
+
+
+def test_thin_ticker_missing_from_both_gets_both_statements():
+    # A thin ticker absent from BOTH watchlist and L2 must produce two separate
+    # actionable lines — one for each requirement.
+    ft = FtRunningResult(running=True, detail="ok")
+    presence = make_presence(ok=False, missing_watchlist=["EWY"], missing_l2=["EWY"])
+    plan = plan_l2_windows(["EWY"], [("EWY", 4.0)])
+    report = evaluate_readiness(ft, presence, plan)
+    joined = " ".join(report.instructions)
+    assert "Add EWY to the FT+ Watchlist" in joined
+    assert "Open an L2 window for EWY" in joined
+
+
 def test_missing_l2_lists_safe_to_close_panels():
     # Need DFEN's depth (assigned); SPY and QQQ L2 panels are open but not needed.
     ft = FtRunningResult(running=True, detail="ok")
@@ -230,6 +262,80 @@ def test_overflow_present_but_nothing_missing_is_ready():
     joined = " ".join(report.overflow_warnings)
     assert "BBB" in joined
     assert str(plan.cap) in joined
+
+
+# ── evaluate_watchlist ────────────────────────────────────────────────────────
+
+
+def test_watchlist_complete_ok_no_add():
+    g = evaluate_watchlist(["SPY", "QQQ"], ["SPY", "QQQ", "IWM"])
+    assert isinstance(g, WatchlistGuidance)
+    assert g.ok is True
+    assert g.add == []
+    # IWM is held but not needed -> advisory remove.
+    assert g.remove == ["IWM"]
+
+
+def test_watchlist_missing_blocks_with_add_list():
+    g = evaluate_watchlist(["SPY", "QQQ", "DFEN"], ["SPY"])
+    assert g.ok is False
+    assert g.add == ["DFEN", "QQQ"]  # sorted
+    assert g.remove == []
+
+
+def test_watchlist_case_insensitive():
+    g = evaluate_watchlist(["spy", "qqq"], ["SPY", "Qqq"])
+    assert g.ok is True
+    assert g.add == []
+    assert g.remove == []
+
+
+def test_watchlist_reports_both_add_and_remove():
+    g = evaluate_watchlist(["SPY", "DFEN"], ["SPY", "JUNK"])
+    assert g.ok is False
+    assert g.add == ["DFEN"]
+    assert g.remove == ["JUNK"]
+
+
+# ── evaluate_l2_priorities ────────────────────────────────────────────────────
+
+
+def test_l2_priorities_all_open_is_ok():
+    # Top-2 priority both have open panels -> nothing to open.
+    g = evaluate_l2_priorities(["EIS", "DFEN"], {"EIS", "DFEN"}, cap=7)
+    assert isinstance(g, L2PriorityGuidance)
+    assert g.ok is True
+    assert g.use == ["EIS", "DFEN"]
+    assert g.to_open == []
+    assert g.to_close == []
+
+
+def test_l2_priorities_flags_open_and_close():
+    # Priority order: EIS, DFEN, IYZ. EIS panel open; DFEN/IYZ closed.
+    # JUNK panel is open but not in the priority set -> safe to close.
+    g = evaluate_l2_priorities(["EIS", "DFEN", "IYZ"], {"EIS", "JUNK"}, cap=7)
+    assert g.ok is False
+    assert g.use == ["EIS"]
+    assert g.to_open == ["DFEN", "IYZ"]
+    assert g.to_close == ["JUNK"]
+
+
+def test_l2_priorities_respects_cap():
+    # cap 2 -> only EIS, DFEN are in the priority window; IYZ is below the cap.
+    # IYZ's open panel is therefore "safe to close" (not in top-2).
+    g = evaluate_l2_priorities(["EIS", "DFEN", "IYZ"], {"EIS", "IYZ"}, cap=2)
+    assert g.use == ["EIS"]
+    assert g.to_open == ["DFEN"]
+    assert g.to_close == ["IYZ"]
+    assert g.ok is False
+
+
+def test_l2_priorities_no_open_panels():
+    g = evaluate_l2_priorities(["EIS", "DFEN"], set(), cap=7)
+    assert g.use == []
+    assert g.to_open == ["EIS", "DFEN"]
+    assert g.to_close == []
+    assert g.ok is False
 
 
 # ── build_sizing_command ──────────────────────────────────────────────────────

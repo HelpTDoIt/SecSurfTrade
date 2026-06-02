@@ -4,17 +4,24 @@ Morning preflight — interactive readiness gate + order sizing walkthrough.
 Runs AFTER cli.compute has produced state.json (positions + sell/buy
 allocations) and BEFORE the human enters orders.  Sequence:
 
-  1. Readiness gate (loops until GREEN):
-       - Confirm Fidelity Trader+ is running.
-       - Read the FT+ Watchlist (OCR), detect thin tickers, build an L2 window
-         plan against the window cap, and verify every needed ticker is in the
-         Watchlist and every thin ticker has an L2 window.
-       - If anything is missing, print exactly what to add in FT+ and wait.
-  2. Order sizing: run `cli.strategy --source atp --strict-atp --l2-symbols`.
-       - On an OCR shortfall (strict stop), pause and require the human to
-         choose: [R]etry / [Y]es-fall-back-to-yfinance / [A]bort.  The yfinance
-         fallback (sizes without live L2 depth) only happens after explicit
-         confirmation.
+  1. Readiness gate (environment only; loops until ready):
+       - Confirm Fidelity Trader+ is running and logged in.  Nothing can be
+         OCR'd until it is, so this is a pure environment check — Watchlist and
+         L2 placement are verified in step 2, where they are read live.
+  2. Pre-sizing checks + order sizing:
+       - (a) Watchlist completeness — every traded ticker must be in the FT+
+             Watchlist; show what to ADD (blocking) / REMOVE (advisory), then
+             re-OCR until complete.
+       - (b) L2 priority — the open L2 panels should hold the highest-impact
+             orders (top-cap by %ADV); show which to OPEN / CLOSE, then
+             re-detect.  Advisory: a missing panel just falls back to POV.
+       - Then run `cli.strategy --source atp --strict-atp --l2-symbols`.  On an
+         OCR shortfall (strict stop), pause and require the human to choose:
+         [R]etry / [Y]es-fall-back-to-yfinance / [A]bort.  The yfinance fallback
+         (sizes without live L2 depth) only happens after explicit confirmation.
+       - Watchlist + L2 are each checked EXACTLY ONCE here (not also in step 1),
+         right before sizing, so the human is never prompted about the same
+         thing twice.
   3. Post-sizing sanity gate on the now-sized state.
        - RED blocks.  YELLOW pauses for confirmation.  GREEN proceeds.
   4. Spoonfeed the exact next steps through to order entry.
@@ -35,19 +42,16 @@ _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from cli import resolve_path
-from preflight.checks import (
-    TickerPresenceResult,
-    check_ft_running,
-    check_tickers_present,
-)
+from preflight.checks import check_ft_running
 from preflight.orchestrator import (
     build_sizing_command,
     classify_sizing_outcome,
-    evaluate_readiness,
+    evaluate_l2_priorities,
+    evaluate_watchlist,
     extra_sanity_warnings,
 )
 from preflight.planner import L2WindowPlan, plan_l2_windows
-from preflight.sanity import SanityFinding, check_sanity
+from preflight.sanity import SanityFinding, check_sanity, explain
 from state.importer import load_state
 
 
@@ -125,94 +129,156 @@ def _enumerate_l2():
     return enumerate_l2_symbols()
 
 
-def _print_readiness(report) -> None:
-    for line in report.overflow_warnings:
-        _warn(line)
-    for line in report.instructions:
-        _info("- " + line)
+def run_readiness_gate(state) -> None:
+    """Loop until Fidelity Trader+ is running and connectable.
 
-
-def run_readiness_gate(state, cap: int):
-    """Loop until the environment is GREEN.  Returns (plan, watchlist_rows).
-
-    watchlist_rows is the FT+ read taken when ready (used later for ADV-based
-    warnings); empty dict if readiness was forced/aborted.
+    This is the ENVIRONMENT gate only: nothing can be OCR'd until FT+ is up and
+    logged in.  Watchlist completeness and L2-window placement are verified in
+    step 2 (run_presizing_checks), which reads the live FT+ window directly — so
+    each is checked exactly once, right before sizing, instead of here and again
+    there (which used to double-prompt the human about the same L2 windows).
     """
     needed = _needed_tickers(state)
-    _info(f"{len(needed)} ticker(s) needed: {', '.join(needed)}")
+    _info(f"{len(needed)} ticker(s) will be traded: {', '.join(needed)}")
 
     while True:
         ft = check_ft_running()
-        watchlist_rows: dict = {}
-
         if ft.running:
-            _ok("Fidelity Trader+ is running.")
-            try:
-                watchlist_rows = _read_watchlist_once()
-            except Exception as exc:  # OCR/setup failure — treat as not-ready
-                _err(f"Could not read the FT+ Watchlist via OCR: {exc}")
-                watchlist_rows = {}
+            _ok("Fidelity Trader+ is running and connectable.")
+            return
 
-            thin = _thin_pairs(state, watchlist_rows) if watchlist_rows else []
-            plan = plan_l2_windows(needed, thin, cap=cap)
-            presence = check_tickers_present(
-                plan,
-                read_watchlist=lambda: watchlist_rows,
-                enumerate_l2=_enumerate_l2,
-            )
-        else:
-            _warn("Fidelity Trader+ is not running.")
-            plan = plan_l2_windows(needed, [], cap=cap)
-            # Placeholder: not-ready, no per-ticker detail until FT+ is up.
-            presence = TickerPresenceResult(
-                ok=False,
-                missing_watchlist=[],
-                missing_l2=[],
-                present_watchlist=[],
-                present_l2=[],
-                visible_l2=[],
-            )
-
-        report = evaluate_readiness(ft, presence, plan)
-
-        # Echo what THIS fresh OCR pass actually saw.  The watchlist + L2 reads
-        # are re-taken every loop, so after the human changes FT+ they can
-        # confirm here whether the change registered — instead of the gate
-        # silently re-prompting for something they believe they already fixed.
-        if ft.running:
-            if watchlist_rows:
-                _info(
-                    f"Watchlist read (fresh OCR): {len(watchlist_rows)} ticker(s) "
-                    f"detected — {', '.join(sorted(watchlist_rows))}"
-                )
-            else:
-                _warn("Watchlist read (fresh OCR): no tickers detected.")
-            detected_l2 = presence.visible_l2
-            _info(
-                "L2 panels detected (fresh OCR): "
-                + (", ".join(detected_l2) if detected_l2 else "none")
-            )
-            if presence.missing_l2:
-                _info(
-                    "  (L2 panels are read by OCR from the RIGHT-HAND side of the "
-                    "FT+ window; keep each panel's 'Level 2 <SYM>' title visible "
-                    "on the right half or it won't be detected.)"
-                )
-
-        _print_readiness(report)
-
-        if report.ready:
-            _ok("Environment ready — all needed tickers present.")
-            return plan, watchlist_rows
-
+        _warn("Fidelity Trader+ is not running.")
+        _info(f"- Start Fidelity Trader+ and log in, then retry. ({ft.detail})")
         _hr()
         ans = _prompt(
-            "     Fix the items above in FT+, then press Enter to take a fresh "
-            "OCR snapshot and re-check (or 'q' to abort): "
+            "     Start FT+ and log in, then press Enter to re-check "
+            "(or 'q' to abort): "
         )
         if ans.lower() in ("q", "a", "quit", "abort"):
             _err("Preflight aborted by user before readiness.")
             sys.exit(1)
+
+
+# ── Pre-sizing confirmation (watchlist + L2 priority) ────────────────────────
+
+
+def run_presizing_checks(state, cap: int) -> None:
+    """Confirm the FT+ environment is right BEFORE order sizing runs.
+
+    Sizing is about to call cli.strategy with live OCR (--source atp) and L2
+    auto-detect.  Two things are far cheaper to fix now than to discover
+    mid-sizing, so each gets a pause-and-recheck loop reading LIVE FT+ via OCR:
+
+      (a) Watchlist completeness — every traded ticker must be in the FT+
+          Watchlist (sizing reads its quote/ADV there).  Shows what to ADD
+          (blocking) and what extra can be REMOVED (advisory), then re-OCRs.
+      (b) L2 priority placement — the open L2 panels should hold the
+          highest-impact orders (top-`cap` by %ADV: bigger order vs. daily
+          volume => fill quality depends most on real book depth).  Shows which
+          to OPEN and which are safe to CLOSE, then re-detects.  Advisory: a
+          ticker without a panel just falls back to POV sizing.
+
+    Decision logic lives in preflight.orchestrator (evaluate_watchlist /
+    evaluate_l2_priorities); this function is only the OCR + prompt shell.
+
+    Returns (plan, watchlist_rows): the L2WindowPlan (thin-ticker assignment,
+    rebuilt from the watchlist read taken here) and the final FT+ Watchlist OCR
+    rows.  Both feed the step-3 sanity gate (THIN_NO_L2 + OVERSIZED_VS_ADV).
+    """
+    from cli.strategy import _rank_l2_candidates  # noqa: PLC0415
+
+    needed = _needed_tickers(state)
+    _info(f"Pre-sizing check: {len(needed)} ticker(s) will be sized.")
+
+    # ── (a) Watchlist completeness ─────────────────────────────────────────
+    watchlist_rows: dict = {}
+    while True:
+        try:
+            watchlist_rows = _read_watchlist_once()
+        except Exception as exc:  # OCR/setup failure — treat as empty read
+            _err(f"Could not read the FT+ Watchlist via OCR: {exc}")
+            watchlist_rows = {}
+
+        wl = evaluate_watchlist(needed, watchlist_rows.keys())
+        if wl.remove:
+            _info(
+                "Watchlist tickers NOT needed today (optional — remove for a "
+                "cleaner/faster read): " + ", ".join(wl.remove)
+            )
+        if wl.ok:
+            _ok(f"Watchlist complete — all {len(needed)} needed ticker(s) present.")
+            break
+
+        _warn(
+            "Watchlist is MISSING needed ticker(s) — sizing needs a quote/ADV for each:"
+        )
+        _info("  ADD to the FT+ Watchlist: " + ", ".join(wl.add))
+        _hr()
+        ans = _prompt(
+            "     Add the ticker(s) above in FT+, then press Enter to re-check "
+            "(or 'q' to abort): "
+        )
+        if ans.lower() in ("q", "a", "quit", "abort"):
+            _err("Preflight aborted by user during the watchlist check.")
+            sys.exit(1)
+
+    # ── (b) L2 priority placement ──────────────────────────────────────────
+    ranked = _rank_l2_candidates(
+        state.computed.sells, state.computed.buy_allocations, watchlist_rows
+    )
+    ranked_syms = [t for t, _ in ranked]
+    while True:
+        try:
+            open_panels = {s.upper() for s in _enumerate_l2()}
+        except Exception as exc:
+            _err(f"Could not enumerate L2 panels via OCR: {exc}")
+            open_panels = set()
+
+        guide = evaluate_l2_priorities(ranked_syms, open_panels, cap)
+        _info(
+            "Open L2 panels (fresh OCR): "
+            + (", ".join(sorted(open_panels)) if open_panels else "none")
+        )
+        _info(
+            f"  Top {cap} by %ADV that WILL get live L2 (panel open): "
+            + (", ".join(guide.use) if guide.use else "none")
+        )
+        if guide.ok:
+            _ok("L2 panels cover the highest-impact orders.")
+            break
+
+        _warn(
+            "Higher-impact ticker(s) have NO open L2 panel "
+            "(they will fall back to POV sizing — coarser chunking):"
+        )
+        _info("  OPEN an L2 window in FT+ for: " + ", ".join(guide.to_open))
+        if guide.to_close:
+            _info(
+                "  Safe to CLOSE to free a slot (not in the top priority set): "
+                + ", ".join(guide.to_close)
+            )
+        _hr()
+        ans = _prompt(
+            "     [O]pen the panels above then re-check, [P]roceed with POV "
+            "fallback for those, or [A]bort: "
+        ).lower()
+        if ans.startswith("a"):
+            _err("Preflight aborted by user during the L2 priority check.")
+            sys.exit(1)
+        if ans.startswith("p"):
+            _warn(
+                "Proceeding — the listed ticker(s) will be sized with POV "
+                "(no live L2 depth)."
+            )
+            break
+        # default / 'o' → loop and re-detect
+
+    # Build the L2 plan for the step-3 sanity gate (THIN_NO_L2 over thin tickers
+    # that exceed the window cap).  Same computation the old readiness gate did,
+    # using the watchlist read taken above.
+    thin = _thin_pairs(state, watchlist_rows) if watchlist_rows else []
+    plan = plan_l2_windows(needed, thin, cap=cap)
+    return plan, watchlist_rows
 
 
 # ── Order sizing ───────────────────────────────────────────────────────────────
@@ -294,19 +360,142 @@ def run_order_sizing(state_path: str, confirmed_proceeds_path: str | None) -> bo
 # ── Sanity gate ─────────────────────────────────────────────────────────────
 
 
+def print_order_book(state) -> None:
+    """Show the suggested orders the gate is about to validate.
+
+    Issue (a): the human must SEE the recommended orders on screen BEFORE the
+    rules run, so a RED/YELLOW finding can be tied to a concrete line.  Records
+    have been reconciled to their chunks in cli.strategy, so the per-ticker
+    total equals the sum of the chunks below it.
+
+    Each order is printed CHUNK-BY-CHUNK — one indented line per chunk — because
+    the human enters one Fidelity order per chunk at market open.  This
+    intentionally prints per-trade detail (ticker / limit / shares) to the
+    console, overriding the default DEBUG-only suppression, because this is the
+    interactive human-verification surface.
+    """
+    sells = state.computed.sells
+    buys = state.computed.buy_allocations
+    _step("Suggested order book (verify before the gate runs)")
+    _info(
+        "These are the EXACT orders you will key into Fidelity. They are read "
+        "from the 'computed' block of state.json (sells, buy_allocations, and "
+        "the sell_chunks/buy_chunks just sized) — nothing here is live; it is a"
+    )
+    _info(
+        "snapshot of the file. Each ticker shows its total, then one indented "
+        "line per chunk = one Fidelity order, in entry order."
+    )
+
+    if not sells and not buys:
+        _info("No orders in state. Nothing to verify.")
+        return
+
+    # Chunk lookup keyed by (account, strategy, ticker), ordered by idx — this is
+    # the entry order. These are what actually get keyed into Fidelity.
+    chunk_index: dict[tuple, list] = {}
+    for c in (*state.computed.sell_chunks, *state.computed.buy_chunks):
+        chunk_index.setdefault((c.account, c.strategy, c.ticker), []).append(c)
+    for v in chunk_index.values():
+        v.sort(key=lambda c: c.idx)
+
+    def _emit(
+        side: str,
+        account: str,
+        strategy: str,
+        ticker: str,
+        total_shares: float,
+        limit: float,
+        est: float,
+    ) -> None:
+        chunks = chunk_index.get((account, strategy, ticker), [])
+        n = len(chunks)
+        _info(
+            f"    {side:<4} {ticker:<6} total {total_shares:>12,.0f} sh "
+            f"@ ${limit:>10,.4f}  ~${est:>14,.2f}  [{strategy}]  "
+            f"({n} chunk{'s' if n != 1 else ''})"
+        )
+        if n == 0:
+            _warn(f"         NO CHUNKS for this order — it cannot be entered as-is.")
+            return
+        for c in chunks:
+            _info(
+                f"         #{c.idx + 1:<2} {c.shares:>10,.0f} sh "
+                f"@ ${c.limit_price:>10,.4f}  ~${c.cost:>14,.2f}"
+            )
+
+    by_acct: dict[str, dict[str, list]] = {}
+    for s in sells:
+        by_acct.setdefault(s.account, {"SELL": [], "BUY": []})["SELL"].append(s)
+    for b in buys:
+        by_acct.setdefault(b.account, {"SELL": [], "BUY": []})["BUY"].append(b)
+
+    grand_sell = grand_buy = 0.0
+    for account in sorted(by_acct):
+        groups = by_acct[account]
+        _info(f"{account}:")
+        acct_sell = acct_buy = 0.0
+        for s in sorted(groups["SELL"], key=lambda x: (x.strategy, x.ticker)):
+            acct_sell += s.est_proceeds
+            _emit(
+                "SELL",
+                s.account,
+                s.strategy,
+                s.ticker,
+                s.shares,
+                s.limit_price,
+                s.est_proceeds,
+            )
+        for b in sorted(groups["BUY"], key=lambda x: (x.strategy, x.ticker)):
+            acct_buy += b.est_cost
+            _emit(
+                "BUY",
+                b.account,
+                b.strategy,
+                b.ticker,
+                float(b.share_target),
+                b.limit_price,
+                b.est_cost,
+            )
+        _info(
+            f"    -- account totals: sell ~${acct_sell:,.2f}  "
+            f"buy ~${acct_buy:,.2f}  net ~${acct_sell - acct_buy:,.2f}"
+        )
+        grand_sell += acct_sell
+        grand_buy += acct_buy
+    _hr()
+    _info(
+        f"All accounts: sell ~${grand_sell:,.2f}  buy ~${grand_buy:,.2f}  "
+        f"net ~${grand_sell - grand_buy:,.2f}"
+    )
+
+
 def _print_findings(findings: list[SanityFinding]) -> None:
     reds = [f for f in findings if f.severity == "RED"]
     yellows = [f for f in findings if f.severity == "YELLOW"]
+    if reds:
+        _err("RED findings BLOCK trading — they must be fixed before any order:")
     for f in reds:
         _err(f"RED  [{f.code}] {f.message}")
+        _err(f"          why: {explain(f.code)}")
+    if yellows:
+        _warn("YELLOW findings are warnings — review, then you may proceed:")
     for f in yellows:
         _warn(f"[{f.code}] {f.message}")
+        _warn(f"     why: {explain(f.code)}")
 
 
 def run_sanity_gate(
     state_path, plan: L2WindowPlan, watchlist_rows, used_fallback, adv_pct
 ):
     state = load_state(resolve_path(state_path))
+    _info(f"Sanity gate reads the freshly-sized state file: {resolve_path(state_path)}")
+    _info(
+        "It re-loads that file, prints the order book below, then runs the "
+        "rule checks. RED = do not trade; YELLOW = review then confirm; "
+        "GREEN = clear. Every finding points at a line in the order book."
+    )
+    print_order_book(state)
     report = check_sanity(state)
     extra = extra_sanity_warnings(
         state,
@@ -383,6 +572,13 @@ def main() -> None:
         metavar="JSON",
         help="Passed through to cli.strategy (actual sell proceeds per account).",
     )
+    parser.add_argument(
+        "--no-next-steps",
+        action="store_true",
+        help="Suppress the trailing 'Next steps' block. Used when a wrapper "
+        "(morning-prep.ps1) prints one consolidated next-steps block at the "
+        "very end of its run instead.",
+    )
     args = parser.parse_args()
 
     state_path = args.state
@@ -391,16 +587,18 @@ def main() -> None:
     print("\n  Morning Preflight")
     _hr()
 
-    _step("Step 1/3 — Readiness gate")
-    plan, watchlist_rows = run_readiness_gate(state, cap=args.cap)
+    _step("Step 1/3 — Readiness gate (Fidelity Trader+ running)")
+    run_readiness_gate(state)
 
-    _step("Step 2/3 — Order sizing")
+    _step("Step 2/3 — Order sizing (watchlist + L2 checks, then size)")
+    plan, watchlist_rows = run_presizing_checks(state, cap=args.cap)
     used_fallback = run_order_sizing(state_path, args.confirmed_proceeds)
 
     _step("Step 3/3 — Pre-trade sanity gate")
     run_sanity_gate(state_path, plan, watchlist_rows, used_fallback, args.adv_pct)
 
-    print_next_steps(state_path)
+    if not args.no_next_steps:
+        print_next_steps(state_path)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,11 @@ fidelity_rebalancer/csvs/
 fidelity_rebalancer/plans/
 fidelity_rebalancer/logs/
 signals.json
+
+# Generated trade plans — contain tickers, limit prices, account names
+plans/
+*.csv
+!fidelity_rebalancer/tests/fixtures/*.csv
 *.json
 !fidelity_rebalancer/tests/fixtures/*.json
 !fidelity_rebalancer/accounts.example.json

@@ -36,6 +36,70 @@ class SanityReport:
         return self.verdict != "RED"
 
 
+# Plain-English "what it means / what to do" gloss per finding code, so the
+# CLI output is self-explanatory without the HTML calculator open for context.
+# RED = blocking (do not enter the orders); YELLOW = warning (proceed with care).
+FINDING_HELP: dict[str, str] = {
+    # ── RED (blocking) ──────────────────────────────────────────────────────
+    "NON_POSITIVE_SHARES": (
+        "A share count is zero or negative — the order is malformed. "
+        "Re-run order sizing; do not enter this."
+    ),
+    "CHUNK_SUM_MISMATCH": (
+        "The sized chunks for this ticker do not add up to the target share "
+        "count — entering them would trade the wrong total. Re-run order sizing; "
+        "do not enter these chunks."
+    ),
+    "DANGLING_CHUNK_ID": (
+        "A strategy points at a chunk that does not exist — the sized state is "
+        "inconsistent. Re-run order sizing."
+    ),
+    "NON_POSITIVE_LIMIT": (
+        "A limit price is zero or negative — unusable for an order. "
+        "Re-run order sizing."
+    ),
+    "LIMIT_FAR_FROM_PREVCLOSE": (
+        "A limit price is far from the prior close — likely a stale quote or a "
+        "typo. Verify the live price before trusting this limit."
+    ),
+    # ── YELLOW (warnings) ───────────────────────────────────────────────────
+    "CASH_NOT_OK": (
+        "Planned buys exceed the proceeds currently settled in this account. "
+        "This is expected during an IRA rebalance, where buys are funded by sells "
+        "that have not yet settled. Confirm the buys are covered by today's sell "
+        "proceeds (or supply --confirmed-proceeds); do not enter buys that exceed "
+        "your actual available cash."
+    ),
+    "ORPHAN_CHUNK": (
+        "A sized chunk is not referenced by any strategy — it may never be "
+        "entered. Confirm it is intended."
+    ),
+    "MISSING_PREVCLOSE": (
+        "No prior close was available, so the limit-vs-prev-close check could "
+        "not fully run. Eyeball the limit price manually."
+    ),
+    "COST_ARITHMETIC_DRIFT": (
+        "A chunk's stored cost does not equal shares x limit — usually rounding. "
+        "Harmless unless the gap is large; verify if so."
+    ),
+    "THIN_NO_L2": (
+        "A thin ticker was sized without live L2 depth — real fills may be worse "
+        "than modeled. Trade smaller / more carefully."
+    ),
+    "OVERSIZED_VS_ADV": (
+        "A chunk is a large fraction of the ticker's 10-day average volume — it "
+        "may move the market. Consider splitting it across sessions."
+    ),
+}
+
+
+def explain(code: str) -> str:
+    """Return the plain-English gloss for a finding code (fallback if unknown)."""
+    return FINDING_HELP.get(
+        code, "See the documentation for this check; resolve before trading."
+    )
+
+
 def _key(account: str, strategy: str, ticker: str) -> tuple[str, str, str]:
     return (account, strategy, ticker)
 
@@ -190,7 +254,7 @@ def check_sanity(
         if not ok:
             findings.append(
                 SanityFinding(
-                    "RED",
+                    "YELLOW",
                     "CASH_NOT_OK",
                     f"Buys in account {account} do not fit within available "
                     f"proceeds (cash_ok is False).",

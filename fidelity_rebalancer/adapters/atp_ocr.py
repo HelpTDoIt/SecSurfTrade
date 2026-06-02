@@ -348,9 +348,13 @@ _L2_TICKER_RE = __import__("re").compile(r"^[A-Z]{1,6}$")
 
 def _find_l2_panels(full: np.ndarray) -> dict[str, dict]:
     """
-    Identify L2 panel bounding boxes by OCR-ing top-right and bottom-right
-    quadrants separately.  Full-image OCR misses small panel title text due
-    to downscaling; quadrant crops maintain enough resolution.
+    Identify L2 panel bounding boxes by OCR-ing the window in quadrants.
+
+    Full-image OCR misses small panel title text due to downscaling, so we OCR
+    the left and right halves of each vertical band separately (preserving
+    resolution) and merge the detected cells before locating panels.  This
+    covers the FULL window width — an L2 panel whose "Level 2 <SYM>" title sits
+    in the LEFT half is detected just as reliably as one on the right.
 
     Returns {SYMBOL: {'x_min', 'x_max', 'data_y', 'quadrant': 'top'|'bottom'}}.
     """
@@ -360,14 +364,17 @@ def _find_l2_panels(full: np.ndarray) -> dict[str, dict]:
 
     panels: dict[str, dict] = {}
 
-    for q_name, y_off, crop in [
-        ("top", 0, full[:mid_y, mid_x:, :]),
-        ("bottom", mid_y, full[mid_y:, mid_x:, :]),
-    ]:
-        result, _ = ocr(crop)
-        cells = [
-            _Cell(c.x + mid_x, c.y + y_off, c.text) for c in _ocr_to_cells(result or [])
-        ]
+    bands = [("top", 0, mid_y), ("bottom", mid_y, img_h)]
+    for q_name, y0, y1 in bands:
+        # OCR left and right halves of the band separately to keep small title
+        # text above the OCR detection threshold, then merge into one cell set.
+        cells: list[_Cell] = []
+        for x_off, x0, x1 in [(0, 0, mid_x), (mid_x, mid_x, img_w)]:
+            result, _ = ocr(full[y0:y1, x0:x1, :])
+            cells.extend(
+                _Cell(c.x + x_off, c.y + y0, c.text)
+                for c in _ocr_to_cells(result or [])
+            )
 
         l2_labels = [c for c in cells if "level" in c.text.lower() and "2" in c.text]
         if not l2_labels:
@@ -375,6 +382,7 @@ def _find_l2_panels(full: np.ndarray) -> dict[str, dict]:
 
         l2_labels.sort(key=lambda c: c.x)
         row_panels: list[tuple[str, float, float]] = []  # (ticker, l2_x, l2_y)
+        seen: set[str] = set()
 
         for lbl in l2_labels:
             near = [
@@ -388,10 +396,16 @@ def _find_l2_panels(full: np.ndarray) -> dict[str, dict]:
             ]
             if near:
                 best = min(near, key=lambda c: abs(c.x - lbl.x))
-                row_panels.append((best.text.strip().upper(), lbl.x, lbl.y))
+                sym = best.text.strip().upper()
+                # A title near the mid-x seam can be picked up in both halves;
+                # keep only the first occurrence per symbol within this band.
+                if sym in seen:
+                    continue
+                seen.add(sym)
+                row_panels.append((sym, lbl.x, lbl.y))
 
         for i, (sym, x, y) in enumerate(row_panels):
-            x_min = mid_x if i == 0 else (row_panels[i - 1][1] + x) / 2
+            x_min = 0 if i == 0 else (row_panels[i - 1][1] + x) / 2
             x_max = (
                 img_w if i == len(row_panels) - 1 else (x + row_panels[i + 1][1]) / 2
             )

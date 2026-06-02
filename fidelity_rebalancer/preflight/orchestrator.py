@@ -48,12 +48,23 @@ def evaluate_readiness(
             f"Start Fidelity Trader+ and log in, then retry. ({ft.detail})"
         )
 
+    # Two INDEPENDENT requirements per ticker:
+    #   • Watchlist membership — needed for every traded ticker (quote/ADV).
+    #   • An open L2 window     — needed only for THIN tickers (live depth).
+    # A thin ticker can satisfy one and still be missing the other, so these are
+    # reported as distinct statements; a ticker missing from both gets both.
     for ticker in presence.missing_watchlist:
-        instructions.append(f"Add {ticker} to the FT+ Watchlist.")
+        instructions.append(
+            f"Add {ticker} to the FT+ Watchlist "
+            f"(missing from Watchlist — required for every traded ticker's "
+            f"quote/ADV data; separate from its L2 window)."
+        )
 
     for ticker in presence.missing_l2:
         instructions.append(
-            f"Open an L2 window for {ticker} (thin ticker — needs depth)."
+            f"Open an L2 window for {ticker} "
+            f"(missing from L2 — thin ticker needs live depth; "
+            f"this is separate from being in the Watchlist)."
         )
 
     # When the human must open L2 windows, spell out which currently-open panels
@@ -95,6 +106,75 @@ def evaluate_readiness(
         ready=ready,
         instructions=instructions,
         overflow_warnings=overflow_warnings,
+    )
+
+
+@dataclass(frozen=True)
+class WatchlistGuidance:
+    """What to ADD / REMOVE in the FT+ Watchlist before sizing.
+
+    `ok` is True only when every needed ticker is present.  `add` is blocking
+    (sizing needs a quote/ADV for every traded ticker); `remove` is advisory —
+    extra tickers don't break sizing, but trimming them keeps the OCR read fast
+    and the window readable.
+    """
+
+    ok: bool
+    add: list[str]
+    remove: list[str]
+
+
+def evaluate_watchlist(needed: list[str], watchlist_syms) -> WatchlistGuidance:
+    """Compare the needed tickers against what the Watchlist OCR actually saw."""
+    needed_n = {t.strip().upper() for t in needed}
+    have_n = {t.strip().upper() for t in watchlist_syms}
+    add = sorted(needed_n - have_n)
+    remove = sorted(have_n - needed_n)
+    return WatchlistGuidance(ok=not add, add=add, remove=remove)
+
+
+@dataclass(frozen=True)
+class L2PriorityGuidance:
+    """Whether the open L2 panels hold the highest-impact (top-cap) tickers.
+
+    `ok` is True when every top-`cap` priority ticker already has an open panel
+    (nothing to open).  This gate is advisory: a missing panel only means that
+    ticker falls back to POV sizing, so the human may proceed anyway.
+
+    `use`      — top-cap priority tickers whose panel is open (will get live L2).
+    `to_open`  — top-cap priority tickers WITHOUT a panel (open for better chunking).
+    `to_close` — open panels NOT among the top-cap priority set (safe to close to
+                 free a slot for a `to_open` ticker).
+    """
+
+    ok: bool
+    use: list[str]
+    to_open: list[str]
+    to_close: list[str]
+
+
+def evaluate_l2_priorities(
+    ranked_syms: list[str],
+    open_panels,
+    cap: int,
+) -> L2PriorityGuidance:
+    """Decide which open panels serve the highest-impact orders.
+
+    `ranked_syms` is the ticker priority high→low (from cli.strategy's
+    _rank_l2_candidates); `open_panels` is the set of L2 panels currently open.
+    Mirrors exactly the selection cli.strategy will make at sizing time, so the
+    human can fix the panels BEFORE sizing instead of seeing the warning after.
+    """
+    from cli.strategy import _select_l2_symbols  # noqa: PLC0415
+
+    use, to_open = _select_l2_symbols(ranked_syms, set(open_panels), cap=cap)
+    use_n = {t.upper() for t in use}
+    to_close = sorted(p for p in {s.upper() for s in open_panels} if p not in use_n)
+    return L2PriorityGuidance(
+        ok=not to_open,
+        use=list(use),
+        to_open=list(to_open),
+        to_close=to_close,
     )
 
 

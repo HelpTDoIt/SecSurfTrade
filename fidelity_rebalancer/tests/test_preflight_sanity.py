@@ -8,7 +8,7 @@ sys.path.insert(0, str(_ROOT))
 
 from datetime import datetime
 
-from preflight.sanity import check_sanity
+from preflight.sanity import FINDING_HELP, check_sanity, explain
 from state.schema import (
     AccountInput,
     BuyAllocationRecord,
@@ -228,11 +228,15 @@ def test_red_dangling_chunk_id():
     assert "DANGLING_CHUNK_ID" in codes(report)
 
 
-def test_red_cash_not_ok():
+def test_yellow_cash_not_ok():
+    # CASH_NOT_OK is a YELLOW warning, not a blocker: during an IRA rebalance the
+    # buys are funded by sells that have not yet settled, so unsettled-cash is
+    # expected. The human confirms; it must not hard-block.
     state = make_green_state()
     state.computed.cash_ok["ACCT2"] = False
     report = check_sanity(state)
-    assert report.verdict == "RED"
+    assert report.verdict == "YELLOW"
+    assert report.ok is True
     assert "CASH_NOT_OK" in codes(report)
 
 
@@ -315,11 +319,11 @@ def test_yellow_orphan_chunk():
 def test_red_dominates_yellow():
     state = make_green_state()
     state.computed.sell_chunks[0].cost = 600.0  # YELLOW drift
-    state.computed.cash_ok["ACCT1"] = False  # RED
+    state.computed.sells[0].shares = -1.0  # RED: NON_POSITIVE_SHARES
     report = check_sanity(state)
     assert report.verdict == "RED"
     assert report.ok is False
-    assert "CASH_NOT_OK" in codes(report)
+    assert "NON_POSITIVE_SHARES" in codes(report)
     assert "COST_ARITHMETIC_DRIFT" in codes(report)
 
 
@@ -350,3 +354,38 @@ def test_limit_deviation_just_over_is_flagged():
     report = check_sanity(state)
     assert "LIMIT_FAR_FROM_PREVCLOSE" in codes(report)
     assert report.verdict == "RED"
+
+
+# ── Plain-English gloss (explain / FINDING_HELP) ────────────────────────────
+
+# Every finding code that check_sanity OR extra_sanity_warnings can emit must
+# carry a "what it means / what to do" gloss so the CLI output stands alone.
+_ALL_FINDING_CODES = {
+    "NON_POSITIVE_SHARES",
+    "CHUNK_SUM_MISMATCH",
+    "DANGLING_CHUNK_ID",
+    "CASH_NOT_OK",
+    "NON_POSITIVE_LIMIT",
+    "LIMIT_FAR_FROM_PREVCLOSE",
+    "ORPHAN_CHUNK",
+    "MISSING_PREVCLOSE",
+    "COST_ARITHMETIC_DRIFT",
+    "THIN_NO_L2",
+    "OVERSIZED_VS_ADV",
+}
+
+
+def test_every_finding_code_has_help_text():
+    for code in _ALL_FINDING_CODES:
+        assert code in FINDING_HELP, f"{code} missing from FINDING_HELP"
+        assert FINDING_HELP[code].strip(), f"{code} has empty help"
+
+
+def test_explain_returns_gloss_for_known_code():
+    assert explain("CHUNK_SUM_MISMATCH") == FINDING_HELP["CHUNK_SUM_MISMATCH"]
+    assert "do not enter" in explain("CHUNK_SUM_MISMATCH").lower()
+
+
+def test_explain_has_fallback_for_unknown_code():
+    out = explain("NOT_A_REAL_CODE")
+    assert out and isinstance(out, str)

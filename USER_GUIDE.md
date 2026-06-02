@@ -154,33 +154,45 @@ DAY BEFORE TRADING:
   2. Run scraper → signals.json (includes prev-day closes)
 
 TRADING MORNING (pre-market):
-  3. Run morning-prep.ps1 — validates config, runs scraper, opens calculator
-     (Or manually: download 3 Fidelity CSVs, run cli.compute → state.json)
-  4. Run scripts/validate_config.py to catch config errors before trading
-  5. Run cli.preflight --state state.json — interactive readiness gate:
-     • Confirms FT+ is running with every needed ticker in the Watchlist
-       and an L2 window open for each thin ticker (7-window cap)
-     • Sizes the orders from live FT+ data (pauses for explicit 'yes' before
-       any yfinance fallback that sizes without live L2 depth)
-     • Runs the pre-trade sanity gate (RED blocks, YELLOW pauses, GREEN proceeds)
-  6. Open React calculator → Import State → review Trades tab
+  3. RECOMMENDED — one command does steps 3a–3e:
+         cd C:\Users\Jason\Documents\Code\SecSurfTrade
+         .\scripts\morning-prep.ps1
+     It walks you through, pausing where you must act (log in, download CSVs):
+       3a. Scrape SectorSurfer signals → signals.json (reuses if < 6h old)
+       3b. Validate accounts.json + signals.json (correct paths, no cd needed)
+       3c. Wait for today's 3 Fidelity CSVs to land in Downloads
+       3d. Run cli.compute → state.json
+       3e. Order-sizing preflight (opt-in): FT+ readiness gate → cli.strategy
+           sizing → pre-trade sanity gate (RED blocks, YELLOW pauses, GREEN ok),
+           then starts the proxy/server and opens the calculator.
+
+     MANUAL equivalent (only if you are not using morning-prep.ps1) — note
+     validate_config defaults to a repo-root-relative path, so run it from the
+     repo root OR pass --accounts explicitly:
+         cd C:\Users\Jason\Documents\Code\SecSurfTrade
+         python scripts/validate_config.py
+         cd fidelity_rebalancer
+         $env:PYTHONPATH = "."
+         python -m cli.compute --inputs $HOME\Downloads --signals ../signals.json --export ../state.json
+         python -m cli.preflight --state ../state.json
+  4. Open React calculator → Import State → review Trades tab
      (Alternatively: load CSVs in Setup tab, enter signals, Calculate)
 
 MARKET OPEN:
-  7. Use Entry tab in React calculator to enter orders in FT+
+  5. Use Entry tab in React calculator to enter orders in FT+
      • Sell Round 1 → enter all first-chunk sells across all accounts
      • Check for fills, then Sell Round 2 (if any)
      • Buy Round 1 → enter all first-chunk buys (IRAs: wait for sell proceeds)
      • Repeat for subsequent buy rounds
 
 DURING TRADING:
-  8. Log fills in the Trades tab as orders execute
+  6. Log fills in the Trades tab as orders execute
      (Optional: cli.progress --state state.json flags buys behind schedule)
 
 END OF DAY:
-  9. Review Allocation tab — confirm drift is within tolerance
+  7. Review Allocation tab — confirm drift is within tolerance
      Export State for records if needed
- 10. Run cli.eod_report — formats the session's journal log into a
+  8. Run cli.eod_report — formats the session's journal log into a
      post-session summary (event tally, notable-events timeline, poll errors)
 ```
 
@@ -188,7 +200,27 @@ END OF DAY:
 
 ## 4. Step-by-Step Reference
 
+> **You normally run one command, not these individually:**
+>
+> ```powershell
+> cd C:\Users\Jason\Documents\Code\SecSurfTrade
+> .\scripts\morning-prep.ps1
+> ```
+>
+> `morning-prep.ps1` performs **Steps 1–3 below plus the order-sizing preflight** automatically, pausing only where you must act (log in to SectorSurfer, download CSVs, confirm a yfinance fallback). The discrete commands are documented in each step **so you know exactly what the script runs** and can run any single step by hand if something needs re-doing. Steps 4 onward (React calculator, order entry) are manual by design — the app never places orders.
+>
+> | Pre-market step  | What `morning-prep.ps1` runs                                                                            |
+> | ---------------- | ------------------------------------------------------------------------------------------------------- |
+> | Step 1 — Signals | `python scripts/sectorsurfer_signals.py --out signals.json`                                             |
+> | (validate)       | `python scripts/validate_config.py --accounts fidelity_rebalancer/accounts.json --signals signals.json` |
+> | Step 2 — CSVs    | waits for today's 3 Fidelity CSVs to appear in `~/Downloads`                                            |
+> | Step 3 — Compute | `python -m cli.compute --inputs ~/Downloads --signals signals.json --export state.json`                 |
+> | Preflight        | `python -m cli.preflight --state state.json`                                                            |
+> | Servers + calc   | `.\run.ps1` (Yahoo proxy 7824, static server 7823, opens Chrome)                                        |
+
 ### Step 1 — Get SectorSurfer signals
+
+> Run automatically by `morning-prep.ps1` (Step 1). The command below is what it invokes — run it standalone only to re-scrape on its own.
 
 SectorSurfer sends an email 3+ hours before market open when a strategy changes. Run the scraper that morning (or the evening before):
 
@@ -228,6 +260,8 @@ The mapping lives in **`strategy_map.json`** (gitignored). See [One-Time Setup](
 
 ### Step 2 — Download Fidelity CSVs
 
+> `morning-prep.ps1` (Step 3) pauses and waits for these to land in `~/Downloads`, then auto-detects them. This is the one step it cannot do for you — you still download from Fidelity.com.
+
 In Fidelity.com (not ATP):
 
 1. Accounts → select account → Positions → **Download** (top-right link)
@@ -235,6 +269,8 @@ In Fidelity.com (not ATP):
 3. Save all CSVs to your **Downloads** folder — the engine auto-detects them there
 
 ### Step 3 — Compute the trade plan (CLI path)
+
+> Run automatically by `morning-prep.ps1` (Step 4). The commands below are what it invokes — run them standalone only to recompute by hand.
 
 ```powershell
 cd C:\Users\Jason\Documents\Code\SecSurfTrade\fidelity_rebalancer
@@ -536,9 +572,12 @@ Exits with an error if `accounts.json` or `strategy_map.json` is missing or inva
 Checks `accounts.json` and (optionally) `signals.json` for common configuration errors before running the engine.
 
 ```powershell
+# Run from the REPO ROOT — the default --accounts path is repo-root-relative:
 python scripts/validate_config.py
 python scripts/validate_config.py --accounts fidelity_rebalancer/accounts.json --signals signals.json
 ```
+
+> **Note:** `--accounts` defaults to `fidelity_rebalancer/accounts.json` resolved against your current directory. If you run this from _inside_ `fidelity_rebalancer/`, it will look for `fidelity_rebalancer/fidelity_rebalancer/accounts.json` and report "accounts file not found". Either run it from the repo root, or pass `--accounts accounts.json`. (`morning-prep.ps1` always passes an absolute path, so it is unaffected.)
 
 Catches: missing required fields, allocation weights that don't sum to 1.0, account names with no `csvSlot`, strategy names in signals that don't match `accounts.json`.
 
