@@ -697,24 +697,87 @@
         );
       }
 
+      // localStorage autosave: the calculator's entered orders/fills live only
+      // in React state, so a reload or server restart would wipe them. We persist
+      // the user-entered slices under this key and restore them on mount.
+      const SAVE_KEY = "secsurf_calc_state_v1";
+
       function App() {
-        const [tab, setTab] = useState("setup");
-        const [csv, setCsv] = useState({ roth: "", rollover: "", tod: "" });
-        const [signals, setSignals] = useState({});
-        const [prevCloses, setPrevCloses] = useState({});
-        const [calculated, setCalc] = useState(false);
-        const [fills, setFills] = useState({});
-        const [chunkLimits, setChunkLimits] = useState({});
+        // Read the saved blob exactly once (lazy, via a ref) so the useState
+        // initializers below can seed from it without a flash or effect ordering
+        // races against the auto-import / accounts.json fetch effects.
+        const savedRef = useRef(null);
+        if (savedRef.current === null) {
+          try {
+            const raw = localStorage.getItem(SAVE_KEY);
+            savedRef.current = raw ? JSON.parse(raw) : {};
+          } catch {
+            savedRef.current = {};
+          }
+        }
+        const SAVED = savedRef.current;
+
+        const [tab, setTab] = useState(SAVED.tab ?? "setup");
+        const [csv, setCsv] = useState(
+          SAVED.csv ?? { roth: "", rollover: "", tod: "" },
+        );
+        const [signals, setSignals] = useState(SAVED.signals ?? {});
+        const [prevCloses, setPrevCloses] = useState(SAVED.prevCloses ?? {});
+        const [calculated, setCalc] = useState(SAVED.calculated ?? false);
+        const [fills, setFills] = useState(SAVED.fills ?? {});
+        const [chunkLimits, setChunkLimits] = useState(SAVED.chunkLimits ?? {});
+        // When a state file is imported that carries Python-sized chunks
+        // (state.computed.sell_chunks / buy_chunks), they are stored here keyed
+        // by account -> "<side>:<strategy>" -> [{idx,shares,limitPrice,cost}].
+        // build{Sell,Buy}Chunks prefer this plan over their own flat-$100K logic.
+        const [importedChunks, setImportedChunks] = useState(
+          SAVED.importedChunks ?? null,
+        );
         const importFileRef = useRef(null);
         const importStateRef = useRef(null);
-        const [importedPositions, setImportedPositions] = useState(null);
-        const [entryRound, setEntryRound] = useState(0);
+        const [importedPositions, setImportedPositions] = useState(
+          SAVED.importedPositions ?? null,
+        );
+        const [entryRound, setEntryRound] = useState(SAVED.entryRound ?? 0);
         const [fetching, setFetching] = useState(false);
         const [configLoaded, setConfigLoaded] = useState(false);
         const [autoImportBanner, setAutoImportBanner] = useState(null);
         const csvRefRoth = useRef(null);
         const csvRefRollover = useRef(null);
         const csvRefTod = useRef(null);
+
+        // Persist the user-entered slices on every change so a reload or
+        // `run.ps1` restart never wipes manually entered orders/fills again.
+        useEffect(() => {
+          try {
+            localStorage.setItem(
+              SAVE_KEY,
+              JSON.stringify({
+                tab,
+                csv,
+                signals,
+                prevCloses,
+                calculated,
+                fills,
+                chunkLimits,
+                importedChunks,
+                importedPositions,
+                entryRound,
+              }),
+            );
+          } catch {}
+        }, [
+          tab,
+          csv,
+          signals,
+          prevCloses,
+          calculated,
+          fills,
+          chunkLimits,
+          importedChunks,
+          importedPositions,
+          entryRound,
+        ]);
 
         const parsed = useMemo(() => {
           if (importedPositions) return importedPositions;
@@ -959,7 +1022,102 @@
           return { buys, isLive, avail };
         };
 
+        // ── imported-plan chunkers ───────────────────────────────────────────
+        // When a Python-sized plan was imported, walk its chunk template in idx
+        // order, honoring per-chunk limit edits (getChkLim) and reducing by the
+        // remaining shares/dollars (fills). Any remainder beyond the plan (e.g.
+        // the calculator recompute totals differ slightly) is appended so no
+        // shares/budget are ever silently dropped.
+        const buildSellFromTemplate = (
+          tmpl,
+          remShares,
+          acct,
+          strat,
+          defLim,
+        ) => {
+          const ch = [];
+          let left = remShares;
+          let lastIdx = -1;
+          for (let k = 0; k < tmpl.length && left > 0.001; k++) {
+            const t = tmpl[k];
+            lastIdx = t.idx;
+            const lim = getChkLim(
+              acct,
+              strat,
+              "sell",
+              t.idx,
+              t.limitPrice || defLim,
+            );
+            const shs = Math.min(t.shares, left);
+            ch.push({
+              idx: t.idx,
+              shares: shs,
+              limitPrice: lim,
+              cost: shs * lim,
+            });
+            left = Math.max(0, left - shs);
+          }
+          if (left > 0.001) {
+            const lim = getChkLim(acct, strat, "sell", lastIdx + 1, defLim);
+            ch.push({
+              idx: lastIdx + 1,
+              shares: left,
+              limitPrice: lim,
+              cost: left * lim,
+            });
+          }
+          return ch;
+        };
+
+        const buildBuyFromTemplate = (
+          tmpl,
+          remDollars,
+          acct,
+          strat,
+          defLim,
+        ) => {
+          if (remDollars < 0.01) return [];
+          const ch = [];
+          let budget = remDollars;
+          let lastIdx = -1;
+          for (let k = 0; k < tmpl.length && budget > 0.01; k++) {
+            const t = tmpl[k];
+            const lim = getChkLim(
+              acct,
+              strat,
+              "buy",
+              t.idx,
+              t.limitPrice || defLim,
+            );
+            if (lim <= 0) break;
+            lastIdx = t.idx;
+            let shs = t.shares;
+            if (shs * lim > budget) shs = Math.floor(budget / lim);
+            if (shs <= 0) break;
+            const cost = shs * lim;
+            ch.push({ idx: t.idx, shares: shs, limitPrice: lim, cost });
+            budget = Math.max(0, budget - cost);
+          }
+          if (budget > 0.01) {
+            const lim = getChkLim(acct, strat, "buy", lastIdx + 1, defLim);
+            if (lim > 0) {
+              const shs = Math.floor(budget / lim);
+              if (shs > 0)
+                ch.push({
+                  idx: lastIdx + 1,
+                  shares: shs,
+                  limitPrice: lim,
+                  cost: shs * lim,
+                });
+            }
+          }
+          return ch;
+        };
+
         const buildSellChunks = (remShares, defLim, acct, strat) => {
+          const tmpl = importedChunks?.[acct]?.["sell:" + strat];
+          if (tmpl && tmpl.length)
+            return buildSellFromTemplate(tmpl, remShares, acct, strat, defLim);
           const ch = [];
           let left = remShares;
           let i = 0;
@@ -984,6 +1142,9 @@
         };
 
         const buildBuyChunks = (remDollars, defLim, acct, strat) => {
+          const tmpl = importedChunks?.[acct]?.["buy:" + strat];
+          if (tmpl && tmpl.length)
+            return buildBuyFromTemplate(tmpl, remDollars, acct, strat, defLim);
           if (defLim <= 0 || remDollars < 0.01) return [];
           const ch = [];
           let budgetLeft = remDollars;
@@ -1409,12 +1570,43 @@
                 };
               }
             });
+            // Prefer the Python-sized chunk plan (state.computed) over the
+            // calculator's own flat-$100K chunking. Build the per-chunk template
+            // and seed the editable limit-price inputs from it.
+            const impChunks = {};
+            const impLimits = {};
+            const ingest = (list, side) => {
+              (list || []).forEach((c) => {
+                if (!c || !c.account || !c.strategy) return;
+                const key = side + ":" + c.strategy;
+                ((impChunks[c.account] ||= {})[key] ||= []).push({
+                  idx: c.idx,
+                  shares: c.shares,
+                  limitPrice: c.limit_price,
+                  cost: c.cost,
+                });
+                ((impLimits[c.account] ||= {})[key] ||= {})[c.idx] =
+                  c.limit_price;
+              });
+            };
+            if (state.computed) {
+              ingest(state.computed.sell_chunks, "sell");
+              ingest(state.computed.buy_chunks, "buy");
+            }
+            Object.values(impChunks).forEach((byKey) =>
+              Object.values(byKey).forEach((arr) =>
+                arr.sort((a, b) => a.idx - b.idx),
+              ),
+            );
+            const hasPlan = Object.keys(impChunks).length > 0;
+
             setImportedPositions(newParsed);
             setSignals(newSignals);
             if (state.inputs.prev_closes)
               setPrevCloses(state.inputs.prev_closes);
             setFills({});
-            setChunkLimits({});
+            setChunkLimits(hasPlan ? impLimits : {});
+            setImportedChunks(hasPlan ? impChunks : null);
             setEntryRound(0);
             setCalc(true);
             setTab("trades");
@@ -2031,6 +2223,7 @@
                   setCalc(true);
                   setFills({});
                   setChunkLimits({});
+                  setImportedChunks(null);
                   setImportedPositions(null);
                   setEntryRound(0);
                   setTab("trades");
@@ -2053,6 +2246,32 @@
                 onClick={() => importStateRef.current?.click()}
               >
                 ⬆ Import State
+              </button>
+              <button
+                style={{ ...S.btn2, fontSize: 13, padding: "10px 20px" }}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Clear all saved data (CSVs, signals, entered orders & fills)? This cannot be undone.",
+                    )
+                  )
+                    return;
+                  try {
+                    localStorage.removeItem(SAVE_KEY);
+                  } catch {}
+                  setCsv({ roth: "", rollover: "", tod: "" });
+                  setSignals({});
+                  setPrevCloses({});
+                  setFills({});
+                  setChunkLimits({});
+                  setImportedChunks(null);
+                  setImportedPositions(null);
+                  setEntryRound(0);
+                  setCalc(false);
+                  setTab("setup");
+                }}
+              >
+                ✕ Clear Saved
               </button>
             </div>
           </div>

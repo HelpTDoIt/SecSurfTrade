@@ -7,6 +7,7 @@ Entry point (from SecSurfTrade/ or fidelity_rebalancer/):
 
 Key bindings: R = refresh now, Q = quit, C = confirm re-quote, I = ignore stall.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,6 +35,7 @@ from state.schema import ChunkRecord, PlanOutput, RebalanceState, StrategyDecisi
 
 # ── Journal ───────────────────────────────────────────────────────────────
 
+
 class Journal:
     """Append-only JSONL audit log."""
 
@@ -56,6 +58,7 @@ class Journal:
 
     def poll_heartbeat(self) -> None:
         import time
+
         now = time.monotonic()
         if now - self._last_heartbeat >= self._HEARTBEAT_INTERVAL:
             self.write("heartbeat", {})
@@ -63,6 +66,7 @@ class Journal:
 
 
 # ── State helpers ─────────────────────────────────────────────────────────
+
 
 def _chunk_lookup(state: RebalanceState) -> dict[str, ChunkRecord]:
     return {
@@ -85,8 +89,7 @@ def _all_sells_terminal(
 ) -> bool:
     terminal = {OrderStatus.Filled, OrderStatus.Cancelled}
     return all(
-        order_map.get(cid, None) is not None
-        and order_map[cid].status in terminal
+        order_map.get(cid, None) is not None and order_map[cid].status in terminal
         for cid in sell_ids
     )
 
@@ -105,6 +108,7 @@ def _actual_proceeds(
 
 
 # ── Monitor App ───────────────────────────────────────────────────────────
+
 
 class MonitorApp(App):
     """Live fill-progress monitor with stall detection."""
@@ -171,7 +175,9 @@ class MonitorApp(App):
         self._recomputed_accounts: set[str] = set()
         self._next_check: datetime | None = None
         self._ticker_for_chunk: dict[str, str] = {
-            ch.chunk_id: ch.ticker for ch in list(self._state.computed.sell_chunks) + list(self._state.computed.buy_chunks)
+            ch.chunk_id: ch.ticker
+            for ch in list(self._state.computed.sell_chunks)
+            + list(self._state.computed.buy_chunks)
         }
         self._side_for_chunk: dict[str, str] = {
             **{ch.chunk_id: "sell" for ch in self._state.computed.sell_chunks},
@@ -230,11 +236,14 @@ class MonitorApp(App):
             if quote:
                 sugg = recommend_requote(stall, side, quote)
                 self._suggestions.append(sugg)
-                self._log_event("stall_detected", {
-                    "chunk_id": stall.chunk_id,
-                    "seconds_stalled": stall.seconds_stalled,
-                    "suggested_limit": sugg.new_limit,
-                })
+                self._log_event(
+                    "stall_detected",
+                    {
+                        "chunk_id": stall.chunk_id,
+                        "seconds_stalled": stall.seconds_stalled,
+                        "suggested_limit": sugg.new_limit,
+                    },
+                )
 
         # Check for recompute triggers
         for account, sell_ids in self._sell_ids_by_account.items():
@@ -242,7 +251,9 @@ class MonitorApp(App):
                 continue
             if sell_ids and _all_sells_terminal(account, new_map, sell_ids):
                 proceeds = _actual_proceeds(account, new_map, sell_ids)
-                self._log_event("recompute_trigger", {"account": account, "proceeds": proceeds})
+                self._log_event(
+                    "recompute_trigger", {"account": account, "proceeds": proceeds}
+                )
                 self._recomputed_accounts.add(account)
 
         self._refresh_display(now)
@@ -260,11 +271,7 @@ class MonitorApp(App):
     def _refresh_display(self, now: datetime) -> None:
         self.query_one("#status-panel", Static).update(self._render_status())
         self.query_one("#stall-panel", Static).update(self._render_stalls())
-        next_str = (
-            self._next_check.strftime("%H:%M:%S")
-            if self._next_check
-            else "—"
-        )
+        next_str = self._next_check.strftime("%H:%M:%S") if self._next_check else "—"
         self.query_one("#footer-bar", Static).update(
             f"Last poll: {now.strftime('%H:%M:%S')}    "
             f"Next check: {next_str}    "
@@ -289,14 +296,23 @@ class MonitorApp(App):
                     lines.append(self._render_chunk_row(cid, "  "))
 
             # Buy section
-            buy_chunks = [ch for ch in self._state.computed.buy_chunks if ch.account == account]
+            buy_chunks = [
+                ch for ch in self._state.computed.buy_chunks if ch.account == account
+            ]
             if buy_chunks:
-                all_sells_done = (not sell_ids) or _all_sells_terminal(account, self._order_map, sell_ids)
+                all_sells_done = (not sell_ids) or _all_sells_terminal(
+                    account, self._order_map, sell_ids
+                )
                 proceeds_str = ""
                 if account in self._recomputed_accounts:
                     proceeds = _actual_proceeds(account, self._order_map, sell_ids)
                     cash = next(
-                        (a.cash_spaxx for a in self._state.inputs.accounts if a.name == account), 0.0
+                        (
+                            a.cash_spaxx
+                            for a in self._state.inputs.accounts
+                            if a.name == account
+                        ),
+                        0.0,
                     )
                     proceeds_str = f" (Budget: ${proceeds + cash:,.2f} = ${proceeds:,.2f} proceeds + ${cash:,.2f} cash)"
                 lines.append(f"  [underline]BUYS[/underline]{proceeds_str}")
@@ -304,7 +320,9 @@ class MonitorApp(App):
                     if all_sells_done:
                         lines.append(self._render_chunk_row(ch.chunk_id, "  "))
                     else:
-                        lines.append(f"    ├─ {ch.ticker:<6} WAITING — sells not complete")
+                        lines.append(
+                            f"    ├─ {ch.ticker:<6} WAITING — sells not complete"
+                        )
 
         lines.append("\n" + "─" * 60)
         return "\n".join(lines)
@@ -352,7 +370,9 @@ class MonitorApp(App):
                 f"   Original limit ${stall.original_limit:.4f}  "
                 f"Suggested re-quote: [bold]${sugg.new_limit:.4f}[/bold]"
             )
-            lines.append("   [bold][C][/bold] Mark cancelled & re-quoted    [bold][I][/bold] Ignore")
+            lines.append(
+                "   [bold][C][/bold] Mark cancelled & re-quoted    [bold][I][/bold] Ignore"
+            )
         return "\n".join(lines)
 
     # ── Actions ───────────────────────────────────────────────────────────
@@ -369,18 +389,23 @@ class MonitorApp(App):
         sugg = self._suggestions[0]
         stall = self._stalls[0]
         now = datetime.now(tz=timezone.utc)
-        self._log_event("requote_confirmed", {
-            "chunk_id": stall.chunk_id,
-            "original_limit": stall.original_limit,
-            "new_limit": sugg.new_limit,
-            "remaining_qty": sugg.remaining_qty,
-        })
+        self._log_event(
+            "requote_confirmed",
+            {
+                "chunk_id": stall.chunk_id,
+                "original_limit": stall.original_limit,
+                "new_limit": sugg.new_limit,
+                "remaining_qty": sugg.remaining_qty,
+            },
+        )
         # Mark original as cancelled in order_map (simulation; real ATP cancel is manual)
         if stall.chunk_id in self._order_map:
             self._order_map[stall.chunk_id].status = OrderStatus.Cancelled
         # Remove from active stalls
         self._stalls = [s for s in self._stalls if s.chunk_id != stall.chunk_id]
-        self._suggestions = [s for s in self._suggestions if s.chunk_id != stall.chunk_id]
+        self._suggestions = [
+            s for s in self._suggestions if s.chunk_id != stall.chunk_id
+        ]
         self._refresh_display(now)
 
     def action_ignore_stall(self) -> None:
@@ -402,18 +427,31 @@ class MonitorApp(App):
 
 # ── CLI entry point ───────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Monitor ATP fill progress for an approved trade plan"
     )
     parser.add_argument("--plan", required=True, help="Path to approved plan JSON")
     parser.add_argument(
-        "--poll-seconds", type=int, default=45,
+        "--poll-seconds",
+        type=int,
+        default=45,
         help="Polling interval in seconds (default: 45)",
     )
     parser.add_argument(
-        "--mock", action="store_true",
+        "--mock",
+        action="store_true",
         help="Use mock ATP adapter (no real ATP required)",
+    )
+    parser.add_argument(
+        "--quote-source",
+        choices=["yahoo", "atp", "mock"],
+        default="yahoo",
+        help=(
+            "Where the stall advisor reads live prices for re-quote suggestions "
+            "(default: yahoo). Ignored when --mock is set (mock reused for quotes)."
+        ),
     )
     args = parser.parse_args()
 
@@ -425,25 +463,58 @@ def main() -> None:
     if config_seconds and not args.poll_seconds:
         poll_seconds = config_seconds
 
+    # Orders adapter (what the monitor polls for fill progress).
     if args.mock:
         from adapters.mock_atp import MockATP
+
         adapter = MockATP()
     else:
         try:
             from adapters.atp_orders import ATPOrdersAdapter
+
             adapter = ATPOrdersAdapter()
         except Exception:
             from adapters.mock_atp import MockATP
+
             adapter = MockATP()
+
+    # Quote adapter (live prices the stall advisor uses to propose new limits).
+    # Without this, _get_quote() always returns None and recommend_requote()
+    # never fires — stalls get flagged but no re-quote price is suggested.
+    quote_adapter = None
+    if args.mock:
+        # MockATP serves both orders and quotes; reuse the one instance.
+        quote_adapter = adapter
+    elif args.quote_source == "mock":
+        from adapters.mock_atp import MockATP
+
+        quote_adapter = MockATP()
+    elif args.quote_source == "atp":
+        try:
+            from adapters.atp_quote import ATPQuoteAdapter
+
+            quote_adapter = ATPQuoteAdapter()
+        except Exception:
+            quote_adapter = None
+    else:  # "yahoo" — reliable live source, always returns a quote
+        try:
+            from adapters.yfinance_fallback import YFinanceQuoteAdapter
+
+            quote_adapter = YFinanceQuoteAdapter()
+        except Exception:
+            quote_adapter = None
 
     journal_path = Path("logs") / "journal.jsonl"
     journal = Journal(journal_path)
-    journal.write("monitor_start", {"plan": str(plan_path), "poll_seconds": poll_seconds})
+    journal.write(
+        "monitor_start", {"plan": str(plan_path), "poll_seconds": poll_seconds}
+    )
 
     plans_dir = plan_path.parent
     app = MonitorApp(
         plan=plan,
         orders_adapter=adapter,
+        quote_adapter=quote_adapter,
         poll_seconds=poll_seconds,
         journal=journal,
         plans_dir=plans_dir,

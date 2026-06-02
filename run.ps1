@@ -192,9 +192,25 @@ if (-not $NoLaunch) {
 }
 
 Set-Location $ProjectRoot
+# Serve with no-store so the browser never reuses a stale rebalance_calculator.html
+# after an edit (python -m http.server sends no Cache-Control, which lets Chrome
+# heuristically cache the page and silently run old code).
+# Write the server to a temp .py file rather than passing via `python -c`:
+# PowerShell strips the embedded double-quotes when handing a multi-line
+# string to a native exe, which corrupts the source and crashes the server.
+$serveScriptTmp = [System.IO.Path]::GetTempFileName() + ".py"
+Set-Content $serveScriptTmp -Encoding UTF8 -Value @'
+import http.server, sys
+class H(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        super().end_headers()
+http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+'@
 try {
-    & python -m http.server $Port --bind 127.0.0.1
+    & python $serveScriptTmp $Port
 } finally {
+    Remove-Item $serveScriptTmp -ErrorAction SilentlyContinue
     # Kill proxy when static server exits
     if ($proxy -and -not $proxy.HasExited) {
         $proxy.Kill()
