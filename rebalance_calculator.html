@@ -2456,8 +2456,8 @@
                       </div>
                       <div style={{ fontSize: 11, color: "#8b949e" }}>
                         Pool: {fmt(res.totalPool)} | Cash: {fmt(res.deplCash)}
-                        {(parsed[n]?.pendingActivity || 0) !== 0 && (
-                          <> | Pending: {fmt(parsed[n].pendingActivity)}</>
+                        {(parsed[acct]?.pendingActivity || 0) !== 0 && (
+                          <> | Pending: {fmt(parsed[acct].pendingActivity)}</>
                         )}
                       </div>
                     </div>
