@@ -24,6 +24,7 @@
   "Account Name 3": {
     "csvSlot": "tod",
     "type": "taxable",
+    "margin": true,
     "strategies": {
       "Strategy A": 0.14,
       "Strategy E": 0.36,

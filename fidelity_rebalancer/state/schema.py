@@ -3,6 +3,7 @@ Pydantic v2 models for the canonical rebalance state JSON (chunk 2).
 The minimal backward-compat models from chunk 1 are retained at the bottom
 for adapters/csv_reader.py.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 
 
 # ── Canonical state JSON schema ────────────────────────────────────────────
+
 
 class PositionInput(BaseModel):
     symbol: str
@@ -24,6 +26,7 @@ class PositionInput(BaseModel):
 class AccountInput(BaseModel):
     name: str
     type: Literal["retirement", "taxable"] = "retirement"
+    margin: bool = False
     cash_reserve: float = 0.0
     positions: list[PositionInput]
     cash_spaxx: float = 0.0
@@ -175,6 +178,7 @@ class PlanOutput(BaseModel):
 
 
 # ── Backward-compat models (used by adapters/csv_reader.py) ───────────────
+
 
 class Position(BaseModel):
     symbol: str

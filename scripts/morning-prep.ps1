@@ -110,35 +110,67 @@ if (-not $csvs) {
 $csvNames = ($csvs | ForEach-Object { $_.Name }) -join ", "
 Write-Pass "$($csvs.Count) CSV(s) found: $csvNames"
 
-# Duplicate-download guard: browsers append " (1)", " (2)", ... to repeat
-# downloads. cli.compute ingests every CSV in Downloads, so a stray copy can
-# double-count a position. Strip the " (n)" suffix, group, and warn on any
-# collision (e.g. Portfolio_Positions_May-31-2026 + ...(1)..(5)).
-$dupGroups = $csvs |
-    Group-Object { $_.BaseName -replace '\s*\(\d+\)$', '' } |
-    Where-Object { $_.Count -gt 1 }
-if ($dupGroups) {
+# Duplicate-download guard: if morning-prep runs more than once a day, today's
+# Downloads can contain multiple CSVs for the same account (Fidelity uses the
+# same date-based filename for every account, so the browser disambiguates with
+# " (1)", " (2)", ... — those suffixes do NOT identify the account). Group by
+# the Account Name inside each CSV and keep the newest per account.
+function Get-CsvAccountName {
+    param([string]$Path)
+    # Mirrors fidelity_rebalancer/engine/calculator.py parse_csv + consolidate:
+    # skip metadata rows that start with '"', treat the first remaining line as
+    # the header (Account Number, Account Name, Symbol, ...), find the
+    # 'Account Name' column index, then read it from the first data row.
+    # Column 0 is the Account NUMBER, not the name — earlier versions grouped
+    # every CSV under the literal string 'Account Number' because of that.
+    try {
+        $lines = Get-Content -Path $Path -TotalCount 100 -ErrorAction Stop |
+            Where-Object { $_.Trim() -and -not $_.StartsWith('"') }
+        if (-not $lines -or $lines.Count -lt 2) { return $null }
+        $hdr = $lines[0] -split ','
+        $idx = -1
+        for ($i = 0; $i -lt $hdr.Count; $i++) {
+            if ($hdr[$i].Trim() -eq 'Account Name') { $idx = $i; break }
+        }
+        if ($idx -lt 0) { return $null }
+        $parts = $lines[1] -split ','
+        if ($parts.Count -le $idx) { return $null }
+        $name = $parts[$idx].Trim().Trim('"')
+        if ($name) { return $name }
+    } catch { }
+    return $null
+}
+
+$csvsByAccount = @{}
+foreach ($f in $csvs) {
+    $acct = Get-CsvAccountName -Path $f.FullName
+    if (-not $acct) { continue }
+    if (-not $csvsByAccount.ContainsKey($acct)) { $csvsByAccount[$acct] = @() }
+    $csvsByAccount[$acct] += $f
+}
+$dupAccounts = $csvsByAccount.GetEnumerator() | Where-Object { $_.Value.Count -gt 1 }
+if ($dupAccounts) {
     Write-Host ""
-    Write-Warn "Possible duplicate position CSVs in Downloads (same file downloaded more than once):"
-    foreach ($g in $dupGroups) {
-        $dupNames = ($g.Group | ForEach-Object { $_.Name }) -join ", "
-        Write-Host "        $($g.Name): $dupNames" -ForegroundColor Yellow
+    Write-Warn "Multiple CSVs for the same account in Downloads (re-run mid-day, or extra clicks):"
+    foreach ($entry in $dupAccounts) {
+        $dupNames = ($entry.Value | Sort-Object LastWriteTime -Descending | ForEach-Object { $_.Name }) -join ", "
+        Write-Host "        $($entry.Key): $dupNames" -ForegroundColor Yellow
     }
-    Write-Host "      cli.compute reads EVERY CSV here - duplicates can double-count positions." -ForegroundColor DarkGray
-    $ans = Read-Host "      Delete the older duplicate copies now, keeping the newest of each? [y/N]"
+    Write-Host "      cli.compute already picks the newest by mtime, but stale copies clutter Downloads." -ForegroundColor DarkGray
+    $ans = Read-Host "      Delete the older copies now, keeping the newest per account? [y/N]"
     if ($ans -match "^[yY]") {
-        foreach ($g in $dupGroups) {
-            $g.Group | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 |
+        foreach ($entry in $dupAccounts) {
+            $entry.Value | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 |
                 ForEach-Object {
                     Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
-                    Write-Host "        Removed $($_.Name)" -ForegroundColor DarkYellow
+                    Write-Host "        Removed $($_.Name) ($($entry.Key))" -ForegroundColor DarkYellow
                 }
         }
         $csvs = Get-TodayCSVs
         $csvNames = ($csvs | ForEach-Object { $_.Name }) -join ", "
         Write-Pass "$($csvs.Count) CSV(s) after dedupe: $csvNames"
     } else {
-        Write-Warn "Keeping duplicates. Verify cli.compute position counts before trading."
+        Write-Warn "Keeping duplicates. cli.compute will use the newest per account by mtime."
     }
 }
 
