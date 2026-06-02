@@ -67,9 +67,12 @@
             const v = line.split(",");
             const o = {};
             hdr.forEach((h, i) => {
+              // Strip $ ANYWHERE (not just leading) so Fidelity's signed
+              // dollar values like '-$99105.05' parse correctly. Prior
+              // leading-only strip silently turned those into 0.
               o[h] = (v[i] || "")
                 .trim()
-                .replace(/^\$/, "")
+                .replace(/[$,]/g, "")
                 .replace(/[+%]/g, "");
             });
             return o;
@@ -79,10 +82,17 @@
       function consolidate(rows) {
         const m = {};
         let name = "";
+        let pendingActivity = 0;
         rows.forEach((r) => {
           if (!name && r["Account Name"]) name = r["Account Name"];
           const s = r["Symbol"];
           if (!s) return;
+          // 'Pending activity' is a signed dollar adjustment, not a position.
+          // Capture separately so cash gate can use it; don't pollute positions.
+          if (s.trim().toLowerCase() === "pending activity") {
+            pendingActivity += parseFloat(r["Current Value"]) || 0;
+            return;
+          }
           const q = parseFloat(r["Quantity"]) || 0,
             v = parseFloat(r["Current Value"]) || 0,
             p = parseFloat(r["Last Price"]) || 0;
@@ -91,7 +101,7 @@
             m[s].value += v;
           } else m[s] = { symbol: s, quantity: q, value: v, price: p };
         });
-        return { accountName: name, positions: m };
+        return { accountName: name, positions: m, pendingActivity };
       }
       function sumFills(fills) {
         if (!fills?.length) return { qty: 0, proceeds: 0, avg: 0 };
@@ -106,7 +116,13 @@
         return arr?.some((f) => f.qty > 0 && f.price > 0) || false;
       }
 
-      function calcTrades(cfg, positions, signals, closes) {
+      function calcTrades(
+        cfg,
+        positions,
+        signals,
+        closes,
+        pendingActivity = 0,
+      ) {
         const { strategies, cashReserve } = cfg;
         const sN = Object.keys(strategies);
         const sPos = {};
@@ -124,7 +140,11 @@
           } else sPos[s] = { ticker: t || "", value: 0, quantity: 0, price: 0 };
         });
         const spaxx = positions["SPAXX**"]?.value || 0;
-        const deplCash = Math.max(0, spaxx - cashReserve);
+        // Effective cash = settled SPAXX + signed pending activity.
+        // Negative pending = already-committed funds; positive = unsettled
+        // incoming. Mirrors engine/calculator.py calc_trades.
+        const effectiveCash = spaxx + (pendingActivity || 0);
+        const deplCash = Math.max(0, effectiveCash - cashReserve);
         const totalPool = totalStratVal + deplCash;
         const trading = [],
           holding = [];
@@ -802,7 +822,13 @@
           const r = {};
           Object.entries(ACCOUNTS_CONFIG).forEach(([n, cfg]) => {
             if (parsed[n])
-              r[n] = calcTrades(cfg, parsed[n].positions, signals, closes);
+              r[n] = calcTrades(
+                cfg,
+                parsed[n].positions,
+                signals,
+                closes,
+                parsed[n].pendingActivity || 0,
+              );
           });
           return r;
         }, [calculated, parsed, signals, closes]);
@@ -1557,6 +1583,7 @@
               newParsed[acct.name] = {
                 accountName: acct.name,
                 positions: posMap,
+                pendingActivity: acct.pending_activity || 0,
               };
             });
             const newSignals = { ...signals };
@@ -1716,6 +1743,7 @@
                   lot_type: "Cash",
                 })),
                 cash_spaxx: spaxx,
+                pending_activity: parsed[n].pendingActivity || 0,
                 strategy_allocations: cfg.strategies,
               };
             });
@@ -2428,6 +2456,9 @@
                       </div>
                       <div style={{ fontSize: 11, color: "#8b949e" }}>
                         Pool: {fmt(res.totalPool)} | Cash: {fmt(res.deplCash)}
+                        {(parsed[n]?.pendingActivity || 0) !== 0 && (
+                          <> | Pending: {fmt(parsed[n].pendingActivity)}</>
+                        )}
                       </div>
                     </div>
                     {overBudget && (

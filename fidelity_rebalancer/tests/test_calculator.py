@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from engine.calculator import _alloc_buys, calc_trades, consolidate, parse_csv
+from engine.calculator import _alloc_buys, _fv, calc_trades, consolidate, parse_csv
 from engine.chunker import build_buy_chunks_legacy, build_sell_chunks_legacy
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -33,6 +33,39 @@ def test_parse_csv_strips_dollar_and_signs():
     rows = parse_csv(text)
     assert rows[0]["Last Price"] == "62.71"
     assert rows[0]["Current Value"] == "12542.00"
+
+
+def test_fv_parses_negative_currency():
+    """Fidelity 'Pending activity' rows export as '-$99105.05' (sign BEFORE $).
+    Prior leading-only strip silently turned these into 0.0."""
+    assert _fv("-$99105.05") == pytest.approx(-99105.05)
+    assert _fv("-$216,901.85") == pytest.approx(-216901.85)
+    assert _fv("$350,056.51") == pytest.approx(350056.51)
+    assert _fv("+$1,245.61") == pytest.approx(1245.61)
+
+
+def test_consolidate_extracts_pending_activity():
+    """'Pending activity' row goes to pending_activity field, not positions."""
+    rows = [
+        {
+            "Account Name": "Rollover IRA",
+            "Symbol": "SPAXX**",
+            "Quantity": "",
+            "Current Value": "350056.51",
+            "Last Price": "",
+        },
+        {
+            "Account Name": "Rollover IRA",
+            "Symbol": "Pending activity",
+            "Quantity": "",
+            "Current Value": "-216901.85",
+            "Last Price": "",
+        },
+    ]
+    result = consolidate(rows)
+    assert "Pending activity" not in result["positions"]
+    assert result["positions"]["SPAXX**"]["value"] == pytest.approx(350056.51)
+    assert result["pending_activity"] == pytest.approx(-216901.85)
 
 
 def test_consolidate_sums_duplicate_symbols():
@@ -110,6 +143,33 @@ def test_parity_cash_ok():
     positions = inputs["accounts"][acct]["positions"]
     result = calc_trades(cfg, positions, inputs["signals"], inputs["closes"])
     assert result["cash_ok"] == expected[acct]["cash_ok"]
+
+
+def test_calc_trades_signed_pending_reduces_cash():
+    """Negative pending activity must reduce available cash in the gate.
+
+    Pure rebalance scenario (no signal changes) with $350K SPAXX and -$216,901.85
+    pending — true available is $133K. Without the fix the gate sees the full
+    $350K and oversizes buys against unsettled commitments.
+    """
+    cfg = {
+        "strategies": {"S1": 1.0},
+        "cashReserve": 0.0,
+    }
+    positions = {
+        "SPAXX**": {"symbol": "SPAXX**", "quantity": 0, "value": 350056.51, "price": 0},
+    }
+    signals = {"S1": {"current": "QQQ", "new": "QQQ"}}  # HOLD (no trade)
+    closes = {"QQQ": 100.0}
+    # Without pending: depl_cash = $350,056.51
+    r_no_pending = calc_trades(cfg, positions, signals, closes)
+    assert r_no_pending["depl_cash"] == pytest.approx(350056.51)
+    # With -$216,901.85 pending: effective cash = $133,154.66
+    r_with_pending = calc_trades(cfg, positions, signals, closes, -216901.85)
+    assert r_with_pending["depl_cash"] == pytest.approx(133154.66)
+    # Positive pending adds (signed model per user choice)
+    r_pos_pending = calc_trades(cfg, positions, signals, closes, 50000.0)
+    assert r_pos_pending["depl_cash"] == pytest.approx(400056.51)
 
 
 def test_parity_one_share_total():

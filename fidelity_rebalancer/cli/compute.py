@@ -71,6 +71,7 @@ def _build_state(
         cfg = ACCOUNTS_CONFIG[acct_name]
         positions_dict: dict = accounts_raw[acct_name]["positions"]
         spaxx_val = positions_dict.get("SPAXX**", {}).get("value", 0.0)
+        pending_val = float(accounts_raw[acct_name].get("pending_activity", 0.0))
 
         account_inputs.append(
             AccountInput(
@@ -88,6 +89,7 @@ def _build_state(
                     for sym, p in positions_dict.items()
                 ],
                 cash_spaxx=spaxx_val,
+                pending_activity=pending_val,
                 strategy_allocations=cfg["strategies"],
             )
         )
@@ -123,7 +125,8 @@ def _build_state(
             continue
         cfg = ACCOUNTS_CONFIG[acct_name]
         positions_dict = accounts_raw[acct_name]["positions"]
-        result = calc_trades(cfg, positions_dict, signals, closes)
+        pending_val = float(accounts_raw[acct_name].get("pending_activity", 0.0))
+        result = calc_trades(cfg, positions_dict, signals, closes, pending_val)
 
         cash_ok[acct_name] = result["cash_ok"]
         one_share_total[acct_name] = result["one_share_total"]
@@ -321,7 +324,10 @@ def main() -> None:
                 file=sys.stderr,
             )
         accounts_raw[canonical] = {
-            "positions": {sym: p.model_dump() for sym, p in portfolio.positions.items()}
+            "positions": {
+                sym: p.model_dump() for sym, p in portfolio.positions.items()
+            },
+            "pending_activity": portfolio.pending_activity,
         }
         _chosen_mtime[canonical] = mtime
         _chosen_file[canonical] = csv_path.name

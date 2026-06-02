@@ -2,19 +2,25 @@
 Port of the React calculator's parseCSV, consolidate, calcTrades, allocBuys.
 All functions are pure (no I/O, no side effects).
 """
+
 from __future__ import annotations
 
 import math
 
 
 def _fv(s: str) -> float:
-    """JS parseFloat equivalent: strip $, +, % then parse; return 0 on failure."""
+    """JS parseFloat equivalent: strip $, +, %, commas then parse; return 0 on failure.
+
+    The $ is stripped ANYWHERE in the string, not just leading. Fidelity exports
+    negative dollar amounts as '-$99105.05' (sign before $), and the prior
+    leading-only strip silently turned those into 0.0 — the Pending activity row
+    was being parsed as $0 across the entire codebase.
+    """
     if not s:
         return 0.0
-    cleaned = s.strip()
-    if cleaned.startswith("$"):
-        cleaned = cleaned[1:]
-    cleaned = cleaned.replace("+", "").replace("%", "")
+    cleaned = (
+        s.strip().replace("$", "").replace(",", "").replace("+", "").replace("%", "")
+    )
     try:
         return float(cleaned) or 0.0
     except ValueError:
@@ -27,7 +33,12 @@ def parse_csv(text: str) -> list[dict[str, str]]:
     Filters lines that start with '"' (Fidelity metadata rows), splits the
     remainder on commas, strips $, +, % from values.
     """
-    lines = [l for l in text.split("\n") for l in [l.rstrip("\r")] if l.strip() and not l.startswith('"')]
+    lines = [
+        l
+        for l in text.split("\n")
+        for l in [l.rstrip("\r")]
+        if l.strip() and not l.startswith('"')
+    ]
     if len(lines) < 2:
         return []
     hdr = [h.strip() for h in lines[0].split(",")]
@@ -51,15 +62,26 @@ def consolidate(rows: list[dict[str, str]]) -> dict:
     Port of JS consolidate.
     Groups rows by Symbol, summing quantity and value for duplicates (e.g.
     SMH in Cash + Margin lots). Price is taken from the first occurrence.
-    Returns {"account_name": str, "positions": {symbol: {...}}}.
+
+    The "Pending activity" pseudo-row (signed dollar amount, no Symbol that
+    matches a ticker) is split out into its own field so it doesn't pollute
+    positions but is still available to the cash gate.
+
+    Returns {"account_name": str, "positions": {symbol: {...}}, "pending_activity": float}.
     """
     positions: dict[str, dict] = {}
     name = ""
+    pending_activity = 0.0
     for r in rows:
         if not name and r.get("Account Name"):
             name = r["Account Name"]
         s = r.get("Symbol", "")
         if not s:
+            continue
+        # Fidelity exports a "Pending activity" row with a signed Current Value
+        # and no real ticker — treat as cash adjustment, not a position.
+        if s.strip().lower() == "pending activity":
+            pending_activity += _fv(r.get("Current Value", ""))
             continue
         q = _fv(r.get("Quantity", ""))
         v = _fv(r.get("Current Value", ""))
@@ -69,7 +91,11 @@ def consolidate(rows: list[dict[str, str]]) -> dict:
             positions[s]["value"] += v
         else:
             positions[s] = {"symbol": s, "quantity": q, "value": v, "price": p}
-    return {"account_name": name, "positions": positions}
+    return {
+        "account_name": name,
+        "positions": positions,
+        "pending_activity": pending_activity,
+    }
 
 
 def calc_trades(
@@ -77,6 +103,7 @@ def calc_trades(
     positions: dict[str, dict],
     signals: dict[str, dict[str, str]],
     closes: dict[str, float],
+    pending_activity: float = 0.0,
 ) -> dict:
     """
     Port of JS calcTrades.
@@ -85,6 +112,9 @@ def calc_trades(
     positions: {symbol: {"symbol", "quantity", "value", "price"}}
     signals:   {strategy: {"current": ticker, "new": ticker}}
     closes:    {ticker: float}  (prev-close prices)
+    pending_activity: signed dollar amount from the Fidelity 'Pending activity'
+                     row. Negative = already-committed funds (unsettled buys,
+                     pending withdrawals); positive = unsettled incoming.
 
     Returns dict with sells, buys, total_pool, depl_cash, est_sell,
     cash_ok, s_pos, one_share_total.
@@ -112,7 +142,12 @@ def calc_trades(
             s_pos[s] = {"ticker": t or "", "value": 0.0, "quantity": 0.0, "price": 0.0}
 
     spaxx = positions.get("SPAXX**", {}).get("value", 0.0)
-    depl_cash = max(0.0, spaxx - cash_reserve)
+    # Effective cash = settled SPAXX + signed pending. Pending negative
+    # (unsettled buys / pending withdrawal) reduces available cash; pending
+    # positive (unsettled incoming) adds to it. Caller can floor pending at
+    # zero before passing in if they want conservative semantics.
+    effective_cash = spaxx + pending_activity
+    depl_cash = max(0.0, effective_cash - cash_reserve)
     total_pool = total_strat_val + depl_cash
 
     # Classify strategies
@@ -144,18 +179,29 @@ def calc_trades(
         if p["quantity"] > 0 and p["ticker"] not in sold_tickers:
             sold_tickers.add(p["ticker"])
             lim = closes.get(p["ticker"]) or p["price"]
-            sells.append({
-                "strategy": s,
-                "ticker": p["ticker"],
-                "quantity": p["quantity"],
-                "limit_price": lim,
-                "est_proceeds": p["quantity"] * lim,
-            })
+            sells.append(
+                {
+                    "strategy": s,
+                    "ticker": p["ticker"],
+                    "quantity": p["quantity"],
+                    "limit_price": lim,
+                    "est_proceeds": p["quantity"] * lim,
+                }
+            )
 
     est_sell = sum(x["est_proceeds"] for x in sells)
     buys = _alloc_buys(
-        s_names, strategies, signals, closes, s_pos,
-        trading, holding, cash_ok, est_sell, depl_cash, total_pool,
+        s_names,
+        strategies,
+        signals,
+        closes,
+        s_pos,
+        trading,
+        holding,
+        cash_ok,
+        est_sell,
+        depl_cash,
+        total_pool,
     )
 
     return {
@@ -192,14 +238,16 @@ def _alloc_buys(
 
     def mk(s: str, tk: str, d: float, p: float, rb: bool) -> None:
         if p > 0 and d > 0:
-            out.append({
-                "strategy": s,
-                "ticker": tk or "",
-                "dollar_target": d,
-                "limit_price": p,
-                "is_rebalance": rb,
-                "target_value": strats[s] * total_pool,
-            })
+            out.append(
+                {
+                    "strategy": s,
+                    "ticker": tk or "",
+                    "dollar_target": d,
+                    "limit_price": p,
+                    "is_rebalance": rb,
+                    "target_value": strats[s] * total_pool,
+                }
+            )
 
     if len(trading) == 0 and cash_ok:
         # Pure rebalance: no signal changes, just deploy cash

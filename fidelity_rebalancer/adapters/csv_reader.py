@@ -2,6 +2,7 @@
 Fidelity CSV → AccountPortfolio adapter.
 File I/O lives here; the parsing logic is in engine.calculator.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,4 +30,5 @@ def read_fidelity_csv(path: str | Path) -> AccountPortfolio:
             )
             for sym, data in raw["positions"].items()
         },
+        pending_activity=raw.get("pending_activity", 0.0),
     )
