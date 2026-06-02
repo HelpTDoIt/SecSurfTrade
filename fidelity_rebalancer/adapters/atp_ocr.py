@@ -562,6 +562,12 @@ _TIF_SET = {"GTC", "DAY", "GTD", "FOK", "IOC", "EXT", "GTX", "OPG"}
 # so a watchlist ticker at the same y doesn't merge into an order row.
 # NOTE (F-4): layout/resolution-specific — revisit if the FT+ window layout changes.
 _ORDERS_GRID_MAX_X = 2050.0
+# F-4b: max height (px) of the Orders-panel crop fed to the second OCR pass.
+# Kept safely under the OCR engine's det_limit_side_len (2400) so the crop is
+# never downscaled — that downscale is exactly what drops the top grid rows.
+# For tall histories the crop is anchored at the grid's BOTTOM and trimmed to
+# this height (covers ~70+ rows), so the most-recent orders are always read.
+_ORDERS_CROP_MAX_H = 2300
 # Status keywords (checked in priority order: cancel/reject are terminal and win
 # over a partial-fill substring, e.g. "Verified Cancelled/Partially Filled").
 _STATUS_KEYWORDS = ("cancel", "reject", "partial", "fill", "open", "working", "queue")
@@ -639,13 +645,21 @@ def _extract_order_from_row(row: list[_Cell]) -> "OrderRow | None":
     if status is None and not account:
         return None
 
-    # Limit price from an "Order Type" cell ("Limit at $55.93" / "Market").
+    # Limit price + order-type presence from the "Order Type" cell
+    # ("Limit at $55.93" / "Market"). has_order_type doubles as an order-identity
+    # signal below — panel chrome (tab titles, filter bar) has no order-type cell.
     limit_price = 0.0
+    has_order_type = False
     for t in texts:
-        if "limit" in t.lower():
+        tl = t.lower()
+        if "limit" in tl:
+            has_order_type = True
             m = _LIMIT_RE.search(t)
             if m:
                 limit_price = parse_price(m.group(1)) or 0.0
+            break
+        if "market" in tl:
+            has_order_type = True
             break
 
     # Quantity + filled. Prefer the "filled / total" fraction cell; otherwise
@@ -678,8 +692,16 @@ def _extract_order_from_row(row: list[_Cell]) -> "OrderRow | None":
         if _ORDERID_RE.match(t) and t not in _TIF_SET and t != symbol:
             order_id = c.text.strip()
             break
+    has_real_id = bool(order_id)
     if not order_id:  # synthetic stable-ish fallback when the id didn't OCR
         order_id = f"{symbol}-{side}-{limit_price:.2f}"
+
+    # Order-identity guard (F-4b): a real order row carries an order-id token or
+    # an order-type cell. Panel chrome that now falls inside the second-pass crop
+    # — the "Orders"/"Saved orders" tabs, the account dropdown, the filter bar —
+    # can match a ticker + account but never both of these, so reject it here.
+    if not has_real_id and not has_order_type:
+        return None
 
     if status is None:
         status = OrderStatus.Open
@@ -730,15 +752,63 @@ def _parse_orders_from_rows(rows: list[list[_Cell]]) -> list[OrderRow]:
     return order_rows
 
 
+def _orders_crop_box(
+    cells: list[_Cell], img_w: int, img_h: int
+) -> tuple[int, int, int, int] | None:
+    """
+    F-4b: from a full-window OCR pass, derive a crop box around the Orders grid.
+
+    The full window (~3800px wide) exceeds the OCR detector's size limit, so it is
+    downscaled and the smallest/topmost grid text drops out. The order-id column
+    (rightmost grid cell) is large enough that the *lower* rows still survive, and
+    those are enough to locate the grid's right and bottom edges. The left edge is
+    the window edge (the grid is left-docked) and the box is anchored at the grid
+    BOTTOM, trimmed to ``_ORDERS_CROP_MAX_H`` so it never re-triggers a downscale.
+
+    Returns ``(x0, y0, x1, y1)`` for ``img[y0:y1, x0:x1]``, or None if no order
+    rows were detected (caller falls back to parsing the full-window cells).
+    """
+    id_cells = [
+        c
+        for c in cells
+        if 1500 < c.x < _ORDERS_GRID_MAX_X and _ORDERID_RE.match(c.text)
+    ]
+    if not id_cells:
+        return None
+    x1 = min(img_w, int(max(c.x for c in id_cells)) + 110)
+    y1 = min(img_h, int(max(c.y for c in id_cells)) + 40)
+    y0 = max(0, y1 - _ORDERS_CROP_MAX_H)
+    return (0, y0, x1, y1)
+
+
 def _read_orders_ocr() -> list[OrderRow]:
     full = _capture_full_window()
-    all_cells = _run_ocr(full, label="orders_full")
+    img_h, img_w = full.shape[:2]
 
-    # The Orders grid renders no visible column-header row in current FT+ builds,
-    # so we no longer anchor on a "Symbol" header. Instead: drop the right-hand
-    # L2/watchlist panel (x beyond the grid boundary) so its tickers can't merge
-    # into order rows during clustering, then pattern-parse each clustered row.
-    grid_cells = [c for c in all_cells if c.x < _ORDERS_GRID_MAX_X]
+    # Pass 1 (locate): OCR the whole window. An image this large is downscaled
+    # below the detector's limit, so small grid text — the topmost order rows in
+    # particular — drops out non-deterministically. But the lower rows that do
+    # survive are enough to locate the grid's right/bottom bounds.
+    locate_cells = _run_ocr(full, label="orders_locate")
+    box = _orders_crop_box(locate_cells, img_w, img_h)
+
+    if box is None:
+        # No order rows detected at all (empty grid, or panel not visible).
+        grid_cells = [c for c in locate_cells if c.x < _ORDERS_GRID_MAX_X]
+        return _parse_orders_from_rows(_cluster_rows(grid_cells))
+
+    # Pass 2 (read): crop to the panel so its (small) text gets the full detector
+    # budget at native resolution — every row, including the top of the grid, now
+    # detects. The crop origin's x is 0, so its column x-coords already match the
+    # full image; only y is offset back for clustering/debug consistency.
+    x0, y0, x1, y1 = box
+    crop = full[y0:y1, x0:x1]
+    crop_cells = _run_ocr(crop, label="orders_crop")
+    cells = [_Cell(c.x, c.y + y0, c.text) for c in crop_cells]
+
+    # Drop the right-hand L2/watchlist panel so a watchlist ticker at the same y
+    # can't merge into an order row during clustering, then pattern-parse rows.
+    grid_cells = [c for c in cells if c.x < _ORDERS_GRID_MAX_X]
     rows = _cluster_rows(grid_cells)
     return _parse_orders_from_rows(rows)
 
