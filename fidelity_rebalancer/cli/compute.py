@@ -76,6 +76,7 @@ def _build_state(
             AccountInput(
                 name=acct_name,
                 type=cfg["type"],
+                margin=bool(cfg.get("margin", False)),
                 cash_reserve=float(cfg["cashReserve"]),
                 positions=[
                     PositionInput(

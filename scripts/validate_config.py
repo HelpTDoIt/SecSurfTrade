@@ -62,6 +62,18 @@ def validate_accounts(accounts: dict) -> list[str]:
                 )
             seen.add(name)
 
+        # Check 5 — type, when present, is a known value
+        if "type" in acct and acct["type"] not in ("retirement", "taxable"):
+            failures.append(
+                f"{acct_name}: type {acct['type']!r} is not 'retirement' or 'taxable'"
+            )
+
+        # Check 6 — margin, when present, is a bool
+        if "margin" in acct and not isinstance(acct["margin"], bool):
+            failures.append(
+                f"{acct_name}: margin must be true/false, got {acct['margin']!r}"
+            )
+
     return failures
 
 
