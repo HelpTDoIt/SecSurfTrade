@@ -204,11 +204,13 @@ class MonitorApp(App):
         poll_seconds: int = 45,
         journal: Journal | None = None,
         plans_dir: Path | None = None,
+        scan_mode: bool = False,
     ) -> None:
         super().__init__()
         self._plan = plan
         self._state = plan.state
         self._orders_adapter = orders_adapter
+        self._scan_mode = scan_mode
         self._quote_adapter = quote_adapter
         self._poll_seconds = poll_seconds
         self._journal = journal
@@ -339,7 +341,43 @@ class MonitorApp(App):
             f"[R] Refresh  [Q] Quit"
         )
 
+    def _render_scan(self) -> str:
+        """Scan-mode display: raw OCR order feed, no plan-matching required."""
+        lines: list[str] = []
+        ts = datetime.now(tz=timezone.utc).strftime("%H:%M:%S UTC")
+        lines.append(f"[bold]SCAN MODE — live orders from ATP  {ts}[/bold]")
+        lines.append("─" * 72)
+        if not self._order_map:
+            lines.append(
+                "  [dim]No orders detected — ensure the Orders panel is visible.[/dim]"
+            )
+        else:
+            open_first = sorted(
+                self._order_map.values(),
+                key=lambda r: (r.status != OrderStatus.Open, r.symbol),
+            )
+            for row in open_first:
+                st = row.status.value
+                pct = (row.filled_qty / row.qty * 100) if row.qty > 0 else 0.0
+                color = (
+                    "[green]"
+                    if row.status == OrderStatus.Filled
+                    else "[yellow]"
+                    if row.status == OrderStatus.Open
+                    else "[dim]"
+                )
+                close = color.replace("[", "[/").replace("bold", "") or "[/dim]"
+                lines.append(
+                    f"  {color}{row.symbol:<6} {row.side:<4}  "
+                    f"{row.filled_qty:>6.0f}/{row.qty:<6.0f}  ({pct:3.0f}%)  "
+                    f"{st:<16}  lim ${row.limit_price:.4f}  {row.order_id}{close}"
+                )
+        lines.append("─" * 72)
+        return "\n".join(lines)
+
     def _render_status(self) -> str:
+        if self._scan_mode:
+            return self._render_scan()
         lines: list[str] = []
         ts = datetime.now(tz=timezone.utc).strftime("%H:%M:%S UTC")
         lines.append(f"[bold]EXECUTION STATUS — {ts}[/bold]")
@@ -499,7 +537,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Monitor ATP fill progress for an approved trade plan"
     )
-    parser.add_argument("--plan", required=True, help="Path to approved plan JSON")
+    parser.add_argument(
+        "--plan",
+        default=None,
+        help="Path to approved plan JSON (required unless --scan is set)",
+    )
     parser.add_argument(
         "--poll-seconds",
         type=int,
@@ -512,6 +554,14 @@ def main() -> None:
         help="Use mock ATP adapter (no real ATP required)",
     )
     parser.add_argument(
+        "--scan",
+        action="store_true",
+        help=(
+            "Scan mode: poll live ATP orders without a plan file. "
+            "Displays a raw order feed and writes fill events to the journal."
+        ),
+    )
+    parser.add_argument(
         "--quote-source",
         choices=["yahoo", "atp", "mock"],
         default="yahoo",
@@ -522,15 +572,44 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    plan_path = Path(resolve_path(args.plan))
-    plan = PlanOutput.model_validate_json(plan_path.read_text(encoding="utf-8"))
+    if not args.scan and not args.plan:
+        parser.error("--plan is required unless --scan is set")
+
+    if args.scan:
+        # Scan mode: no plan file required; build an empty in-memory plan.
+        from datetime import timezone as _tz
+
+        from state.schema import Computed, EngineConfig, Inputs, RebalanceState
+
+        _empty_state = RebalanceState(
+            generated_at=datetime.now(tz=_tz.utc),
+            generator="engine",
+            inputs=Inputs(accounts=[], signals=[]),
+            computed=Computed(
+                cash_ok={},
+                one_share_total={},
+                sells=[],
+                buy_allocations=[],
+                sell_chunks=[],
+                buy_chunks=[],
+            ),
+        )
+        plan = PlanOutput(
+            generated_at=_empty_state.generated_at,
+            state=_empty_state,
+            decisions=[],
+        )
+        plan_path = None
+    else:
+        plan_path = Path(resolve_path(args.plan))
+        plan = PlanOutput.model_validate_json(plan_path.read_text(encoding="utf-8"))
 
     poll_seconds = args.poll_seconds
     config_seconds = plan.state.inputs.config.polling_seconds
     if config_seconds and not args.poll_seconds:
         poll_seconds = config_seconds
 
-    # Orders adapter (what the monitor polls for fill progress).
+    # Orders adapter: UIA → OCR → MockATP fallback chain.
     if args.mock:
         from adapters.mock_atp import MockATP
 
@@ -541,9 +620,14 @@ def main() -> None:
 
             adapter = ATPOrdersAdapter()
         except Exception:
-            from adapters.mock_atp import MockATP
+            try:
+                from adapters.atp_ocr import OCROrdersAdapter
 
-            adapter = MockATP()
+                adapter = OCROrdersAdapter()
+            except Exception:
+                from adapters.mock_atp import MockATP
+
+                adapter = MockATP()
 
     # Quote adapter (live prices the stall advisor uses to propose new limits).
     # Without this, _get_quote() always returns None and recommend_requote()
@@ -574,10 +658,11 @@ def main() -> None:
     journal_path = Path("logs") / "journal.jsonl"
     journal = Journal(journal_path)
     journal.write(
-        "monitor_start", {"plan": str(plan_path), "poll_seconds": poll_seconds}
+        "monitor_start",
+        {"plan": str(plan_path) if plan_path else "scan", "poll_seconds": poll_seconds},
     )
 
-    plans_dir = plan_path.parent
+    plans_dir = plan_path.parent if plan_path else Path("plans")
     app = MonitorApp(
         plan=plan,
         orders_adapter=adapter,
@@ -585,6 +670,7 @@ def main() -> None:
         poll_seconds=poll_seconds,
         journal=journal,
         plans_dir=plans_dir,
+        scan_mode=args.scan,
     )
     app.run()
 
