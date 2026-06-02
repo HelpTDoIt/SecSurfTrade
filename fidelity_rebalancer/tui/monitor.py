@@ -107,6 +107,54 @@ def _actual_proceeds(
     return total
 
 
+# ── Fill detection ────────────────────────────────────────────────────────
+
+
+def detect_and_log_fills(
+    new_map: dict[str, "OrderRow"],
+    last_filled: dict[str, float],
+    journal: "Journal | None",
+) -> None:
+    """Detect fill deltas between polls and write `fill` journal events.
+
+    Compares each order's current ``filled_qty`` against the value stored in
+    ``last_filled`` (mutated in-place after each call).  Any positive delta
+    triggers one ``fill`` event via ``journal.write``.
+
+    First-seen behaviour: an order first seen with ``filled_qty > 0`` emits a
+    fill event for that full amount.  Fills that occurred before the monitor
+    started are captured rather than silently dropped, yielding a complete
+    audit trail from first observation forward.
+
+    Safe to call with ``journal=None`` (no events written but ``last_filled``
+    is still updated).  This makes unit testing without a real Journal file
+    possible.
+
+    Args:
+        new_map:     {order_id: OrderRow} snapshot from the current poll.
+        last_filled: Mutable dict tracking last-seen filled_qty per order_id.
+                     Pass an empty dict on first call; it is updated in place.
+        journal:     Journal instance to receive ``fill`` events, or None.
+    """
+    for order_id, row in new_map.items():
+        prev = last_filled.get(order_id, 0.0)
+        delta = row.filled_qty - prev
+        if delta > 0 and journal is not None:
+            journal.write(
+                "fill",
+                {
+                    "order_id": order_id,
+                    "symbol": row.symbol,
+                    "side": row.side,
+                    "delta": delta,
+                    "filled_qty": row.filled_qty,
+                    "limit_price": row.limit_price,
+                    "status": row.status.value,
+                },
+            )
+        last_filled[order_id] = row.filled_qty
+
+
 # ── Monitor App ───────────────────────────────────────────────────────────
 
 
@@ -183,6 +231,11 @@ class MonitorApp(App):
             **{ch.chunk_id: "sell" for ch in self._state.computed.sell_chunks},
             **{ch.chunk_id: "buy" for ch in self._state.computed.buy_chunks},
         }
+        # Per-order last-seen filled_qty, used to detect fill deltas between polls.
+        # An order first seen with filled_qty > 0 is treated as an immediate fill
+        # for that amount — this yields a complete trail from first observation
+        # forward rather than silently discarding pre-monitor fills.
+        self._last_filled: dict[str, float] = {}
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status-panel")
@@ -219,6 +272,10 @@ class MonitorApp(App):
         else:
             if self._journal:
                 self._journal.poll_heartbeat()
+
+        # Detect fill deltas and write `fill` journal events BEFORE updating
+        # self._order_map so that self._last_filled reflects the prior state.
+        self._detect_and_log_fills(new_map)
 
         self._order_map = new_map
 
@@ -257,6 +314,10 @@ class MonitorApp(App):
                 self._recomputed_accounts.add(account)
 
         self._refresh_display(now)
+
+    def _detect_and_log_fills(self, new_map: dict[str, "OrderRow"]) -> None:
+        """Delegate to the module-level helper, updating self._last_filled in place."""
+        detect_and_log_fills(new_map, self._last_filled, self._journal)
 
     def _get_quote(self, ticker: str) -> QuoteSnapshot | None:
         if not self._quote_adapter or not ticker:
