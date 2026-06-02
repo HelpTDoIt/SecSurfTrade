@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 from datetime import datetime, date, timezone, timedelta
 from functools import lru_cache
 from typing import NamedTuple
@@ -542,13 +543,160 @@ _STATUS_MAP: dict[str, OrderStatus] = {
     "canceled": OrderStatus.Cancelled,
     "rejected": OrderStatus.Rejected,
 }
-_TICKER_RE = __import__("re").compile(r"^[A-Z]{1,6}(\.\w+)?$")
-_LIMIT_RE = __import__("re").compile(r"\$?\s*([\d,]+\.?\d*)")
+_TICKER_RE = re.compile(r"^[A-Z]{1,6}(\.\w+)?$")
+_LIMIT_RE = re.compile(r"\$?\s*([\d,]+\.?\d*)")
+
+# F-4a pattern anchors. The FT+ Orders grid in current builds renders NO visible
+# column-header row (the old parser anchored on a "Symbol" header that does not
+# exist, so it returned zero rows even though the panel was full of readable
+# orders). Instead we identify and parse each order row by per-cell semantics.
+_FILLED_FRAC_RE = re.compile(
+    r"(\d[\d,]*)\s*/\s*(\d[\d,]*)"
+)  # "66 / 100" -> filled/total
+_ORDERID_RE = re.compile(r"^\d[0-9A-Z]{5,9}$")  # e.g. "27D1N8R8" (starts with a digit)
+_ACCT_RE = re.compile(r"\*\s*\d{3,5}")  # account masks like "*6131"
+_INT_RE = re.compile(r"^\d[\d,]*$")  # a plain integer share-count cell
+_TIF_SET = {"GTC", "DAY", "GTD", "FOK", "IOC", "EXT", "GTX", "OPG"}
+# x-coordinate boundary separating the left Orders grid from the right-hand
+# Level-2 / watchlist panel. Cells beyond this are dropped BEFORE row clustering
+# so a watchlist ticker at the same y doesn't merge into an order row.
+# NOTE (F-4): layout/resolution-specific — revisit if the FT+ window layout changes.
+_ORDERS_GRID_MAX_X = 2050.0
+# Status keywords (checked in priority order: cancel/reject are terminal and win
+# over a partial-fill substring, e.g. "Verified Cancelled/Partially Filled").
+_STATUS_KEYWORDS = ("cancel", "reject", "partial", "fill", "open", "working", "queue")
 
 
 def _is_order_header(row: list[_Cell]) -> bool:
     low = {c.text.lower() for c in row}
     return bool(low & {"symbol", "action", "status", "amount"})
+
+
+def _status_from_text(text: str) -> OrderStatus:
+    """Map a free-text status cell to an OrderStatus (terminal states win)."""
+    t = text.lower()
+    if "cancel" in t:
+        return OrderStatus.Cancelled
+    if "reject" in t:
+        return OrderStatus.Rejected
+    if "partial" in t:
+        return OrderStatus.PartiallyFilled
+    if "fill" in t:  # "Filled at $X"
+        return OrderStatus.Filled
+    if "open" in t or "working" in t or "queue" in t:
+        return OrderStatus.Open
+    return OrderStatus.Open
+
+
+def _extract_order_from_row(row: list[_Cell]) -> "OrderRow | None":
+    """Extract one OrderRow from a clustered row of OCR cells by pattern.
+
+    Returns None when the row is not a recognizable order (no ticker, or no
+    status/account signal) — this is how header fragments, blank rows, and
+    stray L2/watchlist cells get filtered out without a column-header anchor.
+    """
+    cells = sorted(row, key=lambda c: c.x)
+    texts = [c.text.strip() for c in cells]
+
+    # Symbol = leftmost ticker-shaped cell.
+    symbol = ""
+    for c in cells:
+        t = c.text.strip().upper()
+        if _TICKER_RE.match(t):
+            symbol = t
+            break
+    if not symbol:
+        return None
+
+    # Side.
+    side = "BUY"
+    for t in texts:
+        tl = t.lower()
+        if tl == "buy" or tl.startswith("buy "):
+            side = "BUY"
+            break
+        if tl == "sell" or tl.startswith("sell "):
+            side = "SELL"
+            break
+
+    # Account (mask like "Rollover IRA *6131").
+    account = ""
+    for t in texts:
+        tl = t.lower()
+        if _ACCT_RE.search(t) or "ira" in tl or "individual" in tl or "roth" in tl:
+            account = t
+            break
+
+    # Status.
+    status: OrderStatus | None = None
+    for t in texts:
+        tl = t.lower()
+        if any(k in tl for k in _STATUS_KEYWORDS):
+            status = _status_from_text(t)
+            break
+
+    # A real order row must carry a status or an account; otherwise reject.
+    if status is None and not account:
+        return None
+
+    # Limit price from an "Order Type" cell ("Limit at $55.93" / "Market").
+    limit_price = 0.0
+    for t in texts:
+        if "limit" in t.lower():
+            m = _LIMIT_RE.search(t)
+            if m:
+                limit_price = parse_price(m.group(1)) or 0.0
+            break
+
+    # Quantity + filled. Prefer the "filled / total" fraction cell; otherwise
+    # fall back to the plain share-count cell in the amount column (left of the
+    # status column at x~580).
+    qty = 0.0
+    filled = 0.0
+    frac = None
+    for t in texts:
+        m = _FILLED_FRAC_RE.search(t)
+        if m:
+            frac = m
+            break
+    if frac:
+        filled = float(frac.group(1).replace(",", ""))
+        qty = float(frac.group(2).replace(",", ""))
+    else:
+        for c in cells:
+            t = c.text.strip()
+            if c.x < 580 and _INT_RE.match(t):
+                qty = float(t.replace(",", ""))
+                break
+        if status == OrderStatus.Filled:
+            filled = qty
+
+    # Order id = rightmost alnum token starting with a digit (the FT+ order #).
+    order_id = ""
+    for c in sorted(cells, key=lambda c: -c.x):
+        t = c.text.strip().upper()
+        if _ORDERID_RE.match(t) and t not in _TIF_SET and t != symbol:
+            order_id = c.text.strip()
+            break
+    if not order_id:  # synthetic stable-ish fallback when the id didn't OCR
+        order_id = f"{symbol}-{side}-{limit_price:.2f}"
+
+    if status is None:
+        status = OrderStatus.Open
+
+    placed_at = datetime.now(tz=timezone.utc)
+    return OrderRow(
+        account=account,
+        symbol=symbol,
+        side=side,
+        qty=qty,
+        filled_qty=filled,
+        limit_price=limit_price,
+        status=status,
+        placed_at=placed_at,
+        last_update_at=placed_at,
+        order_id=order_id,
+    )
 
 
 def _find_orders_grid_ctrl(controls: list):
@@ -567,96 +715,18 @@ def _find_orders_grid_ctrl(controls: list):
 
 
 def _parse_orders_from_rows(rows: list[list[_Cell]]) -> list[OrderRow]:
-    # Find header to calibrate column x-positions
-    col_xs: list[float] = []
-    col_names: list[str] = []
-    for row in rows:
-        if _is_order_header(row):
-            col_xs = [c.x for c in row]
-            col_names = [c.text for c in row]
-            break
+    """Pattern-parse clustered OCR rows into OrderRows (F-4a).
 
+    Header rows (if any) and non-order rows are skipped automatically by
+    ``_extract_order_from_row`` returning None.
+    """
     order_rows: list[OrderRow] = []
     for row in rows:
         if _is_order_header(row):
             continue
-        txts = _texts(row)
-        if not txts:
-            continue
-
-        if col_xs:
-            # Map each cell to its nearest header column
-            row_dict: dict[str, str] = {}
-            for cell in row:
-                idx = _assign_col(cell.x, col_xs, col_names)
-                col = col_names[idx] if idx < len(col_names) else str(idx)
-                row_dict[col] = cell.text
-        else:
-            # Fallback: positional (Symbol=0, Action=1, Amount=2, OrderType=3, Status=4, ...)
-            names = [
-                "Symbol",
-                "Action",
-                "Amount",
-                "Order Type",
-                "Status",
-                "Filled",
-                "Last",
-                "$Chg",
-                "%Chg",
-                "Bid",
-                "Account",
-                "Mid",
-                "Ask",
-                "TIF",
-                "Conditions",
-                "Destination",
-                "Order Time",
-            ]
-            row_dict = {names[i]: txts[i] for i in range(min(len(names), len(txts)))}
-
-        symbol = row_dict.get("Symbol", "").strip().upper()
-        if not symbol or not _TICKER_RE.match(symbol):
-            continue
-
-        side = row_dict.get("Action", "BUY").upper()
-        qty = float(parse_size(row_dict.get("Amount", "0")) or 0)
-        status_txt = row_dict.get("Status", "open").lower().replace(" ", "")
-        status = _STATUS_MAP.get(status_txt, OrderStatus.Open)
-
-        filled_qty = float(parse_size(row_dict.get("Filled", "0")) or 0)
-
-        order_type = row_dict.get("Order Type", "")
-        m = _LIMIT_RE.search(order_type)
-        limit_price = parse_price(m.group(1)) if m else 0.0
-
-        account = row_dict.get("Account", "")
-        placed_at = datetime.now(tz=timezone.utc)
-
-        last_px = parse_price(row_dict.get("Last", "0"))
-        bid_px = parse_price(row_dict.get("Bid", "0"))
-        ask_px = parse_price(row_dict.get("Ask", "0"))
-        mid_px = parse_price(row_dict.get("Mid", "0"))
-        tif = row_dict.get("TIF", "").strip()
-
-        order_rows.append(
-            OrderRow(
-                account=account,
-                symbol=symbol,
-                side=side,
-                qty=qty,
-                filled_qty=filled_qty,
-                limit_price=limit_price,
-                status=status,
-                placed_at=placed_at,
-                last_update_at=placed_at,
-                last_price=last_px,
-                bid=bid_px,
-                ask=ask_px,
-                mid=mid_px,
-                tif=tif,
-            )
-        )
-
+        order = _extract_order_from_row(row)
+        if order is not None:
+            order_rows.append(order)
     return order_rows
 
 
@@ -664,17 +734,12 @@ def _read_orders_ocr() -> list[OrderRow]:
     full = _capture_full_window()
     all_cells = _run_ocr(full, label="orders_full")
 
-    # Find the Orders column-header row by locating the "Symbol" header cell.
-    # The data rows follow immediately below; stop ~300px down to avoid
-    # picking up the L2 panel that starts further below.
-    symbol_headers = [c for c in all_cells if c.text.lower() == "symbol"]
-    if not symbol_headers:
-        return []  # orders panel not visible
-
-    header_y = min(c.y for c in symbol_headers)
-    orders_cells = [c for c in all_cells if header_y - 5 <= c.y <= header_y + 300]
-
-    rows = _cluster_rows(orders_cells)
+    # The Orders grid renders no visible column-header row in current FT+ builds,
+    # so we no longer anchor on a "Symbol" header. Instead: drop the right-hand
+    # L2/watchlist panel (x beyond the grid boundary) so its tickers can't merge
+    # into order rows during clustering, then pattern-parse each clustered row.
+    grid_cells = [c for c in all_cells if c.x < _ORDERS_GRID_MAX_X]
+    rows = _cluster_rows(grid_cells)
     return _parse_orders_from_rows(rows)
 
 
