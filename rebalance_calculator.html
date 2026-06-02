@@ -727,10 +727,50 @@
         // initializers below can seed from it without a flash or effect ordering
         // races against the auto-import / accounts.json fetch effects.
         const savedRef = useRef(null);
+        // restoredAtRef holds the timestamp string shown in the restore banner,
+        // or null when nothing was restored (different day or no saved data).
+        const restoredAtRef = useRef(undefined); // undefined = not yet evaluated
         if (savedRef.current === null) {
+          restoredAtRef.current = null; // default: no restore
           try {
             const raw = localStorage.getItem(SAVE_KEY);
-            savedRef.current = raw ? JSON.parse(raw) : {};
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              const savedAt = parsed.savedAt;
+              if (savedAt) {
+                const savedDate = new Date(savedAt);
+                const today = new Date();
+                const sameDay =
+                  savedDate.getFullYear() === today.getFullYear() &&
+                  savedDate.getMonth() === today.getMonth() &&
+                  savedDate.getDate() === today.getDate();
+                if (sameDay) {
+                  savedRef.current = parsed;
+                  // Format: "Jun 2, 2026, 3:41 PM" (locale-aware)
+                  restoredAtRef.current = savedDate.toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  });
+                } else {
+                  // Stale session from a prior day — discard it entirely.
+                  try {
+                    localStorage.removeItem(SAVE_KEY);
+                  } catch {}
+                  savedRef.current = {};
+                }
+              } else {
+                // No savedAt field → old format or tampered blob; discard.
+                try {
+                  localStorage.removeItem(SAVE_KEY);
+                } catch {}
+                savedRef.current = {};
+              }
+            } else {
+              savedRef.current = {};
+            }
           } catch {
             savedRef.current = {};
           }
@@ -762,6 +802,11 @@
         const [fetching, setFetching] = useState(false);
         const [configLoaded, setConfigLoaded] = useState(false);
         const [autoImportBanner, setAutoImportBanner] = useState(null);
+        // restoredAt is the human-readable timestamp from restoredAtRef (set once
+        // during the ref-init pass above) or null when no session was restored.
+        const [restoredAt] = useState(() => restoredAtRef.current ?? null);
+        const [restoreBannerDismissed, setRestoreBannerDismissed] =
+          useState(false);
         const csvRefRoth = useRef(null);
         const csvRefRollover = useRef(null);
         const csvRefTod = useRef(null);
@@ -773,6 +818,7 @@
             localStorage.setItem(
               SAVE_KEY,
               JSON.stringify({
+                savedAt: Date.now(),
                 tab,
                 csv,
                 signals,
@@ -3610,6 +3656,24 @@
                 <button
                   style={{ ...S.btnSm, marginLeft: 12, flexShrink: 0 }}
                   onClick={() => setAutoImportBanner(null)}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            {restoredAt && !restoreBannerDismissed && (
+              <div
+                style={{
+                  ...S.info,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <span>&#x1F4BE; Session restored from {restoredAt}</span>
+                <button
+                  style={{ ...S.btnSm, marginLeft: 12, flexShrink: 0 }}
+                  onClick={() => setRestoreBannerDismissed(true)}
                 >
                   ✕
                 </button>
