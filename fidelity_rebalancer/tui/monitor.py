@@ -306,15 +306,21 @@ class MonitorApp(App):
                 proceeds_str = ""
                 if account in self._recomputed_accounts:
                     proceeds = _actual_proceeds(account, self._order_map, sell_ids)
-                    cash = next(
-                        (
-                            a.cash_spaxx
-                            for a in self._state.inputs.accounts
-                            if a.name == account
-                        ),
-                        0.0,
+                    acct_in = next(
+                        (a for a in self._state.inputs.accounts if a.name == account),
+                        None,
                     )
-                    proceeds_str = f" (Budget: ${proceeds + cash:,.2f} = ${proceeds:,.2f} proceeds + ${cash:,.2f} cash)"
+                    cash = acct_in.cash_spaxx if acct_in else 0.0
+                    pending = acct_in.pending_activity if acct_in else 0.0
+                    effective_cash = cash + pending
+                    if pending:
+                        proceeds_str = (
+                            f" (Budget: ${proceeds + effective_cash:,.2f} = "
+                            f"${proceeds:,.2f} proceeds + ${cash:,.2f} cash "
+                            f"{'+' if pending >= 0 else '−'} ${abs(pending):,.2f} pending)"
+                        )
+                    else:
+                        proceeds_str = f" (Budget: ${proceeds + cash:,.2f} = ${proceeds:,.2f} proceeds + ${cash:,.2f} cash)"
                 lines.append(f"  [underline]BUYS[/underline]{proceeds_str}")
                 for ch in buy_chunks:
                     if all_sells_done:

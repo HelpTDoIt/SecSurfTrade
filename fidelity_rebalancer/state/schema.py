@@ -30,6 +30,10 @@ class AccountInput(BaseModel):
     cash_reserve: float = 0.0
     positions: list[PositionInput]
     cash_spaxx: float = 0.0
+    # Signed pending activity from the Fidelity CSV (unsettled buys/sells/
+    # transfers). Negative = committed funds, positive = unsettled incoming.
+    # Used as cash = cash_spaxx + pending_activity - cash_reserve in the gate.
+    pending_activity: float = 0.0
     strategy_allocations: dict[str, float]
 
 
@@ -190,6 +194,7 @@ class Position(BaseModel):
 class AccountPortfolio(BaseModel):
     account_name: str
     positions: dict[str, Position]
+    pending_activity: float = 0.0
 
 
 class Signal(BaseModel):
