@@ -609,7 +609,7 @@ _LIMIT_RE = re.compile(r"\$?\s*([\d,]+\.?\d*)")
 _FILLED_FRAC_RE = re.compile(
     r"(\d[\d,]*)\s*/\s*(\d[\d,]*)"
 )  # "66 / 100" -> filled/total
-_ORDERID_RE = re.compile(r"^\d[0-9A-Z]{5,9}$")  # e.g. "27D1N8R8" (starts with a digit)
+_ORDERID_RE = re.compile(r"^[A-Z\d][0-9A-Z]{5,9}$")  # e.g. "27D1N8R8" or "F038HKMM"
 _ACCT_RE = re.compile(r"\*\s*\d{3,5}")  # account masks like "*6131"
 _INT_RE = re.compile(r"^\d[\d,]*$")  # a plain integer share-count cell
 _TIF_SET = {"GTC", "DAY", "GTD", "FOK", "IOC", "EXT", "GTX", "OPG"}

@@ -254,3 +254,75 @@ def test_crop_box_tall_history_anchors_to_bottom():
     assert y1 == 2600 + 40
     assert y0 == (2600 + 40) - 2300  # _ORDERS_CROP_MAX_H trim, bottom-anchored
     assert y1 - y0 == 2300
+
+
+def test_letter_prefix_order_id_is_real_id():
+    # F-4c: FT+ issues order IDs like "F038HKMM" (letter-prefixed, not digit-only).
+    # The old _ORDERID_RE required a leading digit, so these fell through to the
+    # synthetic-id fallback.  Two same-ticker/side/price orders (e.g. two SPY
+    # orders at $500) then generated identical synthetic IDs and one silently
+    # overwrote the other in the order map.  _ORDERID_RE now accepts any leading
+    # uppercase letter or digit.
+    spy_buy = _row(
+        [
+            (210, "SPY"),
+            (310, "Buy"),
+            (412, "1"),
+            (588, "Open"),
+            (842, "Limit at $500.00"),
+            (990, "Individual TOD *9440"),
+            (1939, "F038HKMM"),
+        ]
+    )
+    spy_sell = _row(
+        [
+            (210, "SPY"),
+            (310, "Sell"),
+            (412, "1"),
+            (588, "Open"),
+            (842, "Limit at $500.00"),
+            (990, "Individual TOD *9440"),
+            (1939, "F038HDOP"),
+        ]
+    )
+    buy = _extract_order_from_row(spy_buy)
+    sell = _extract_order_from_row(spy_sell)
+    assert buy is not None and sell is not None
+    # Both must get real (distinct) IDs, not synthetic fallbacks
+    assert buy.order_id == "F038HKMM"
+    assert sell.order_id == "F038HDOP"
+    assert buy.side == "BUY"
+    assert sell.side == "SELL"
+
+
+def test_two_same_ticker_orders_no_id_collision():
+    # Parsing both letter-prefix SPY orders and building an order map must yield
+    # two distinct entries — no silent overwrite.
+    spy_buy = _row(
+        [
+            (210, "SPY"),
+            (310, "Buy"),
+            (412, "1"),
+            (588, "Open"),
+            (842, "Limit at $500.00"),
+            (990, "Individual TOD *9440"),
+            (1939, "F038HKMM"),
+        ]
+    )
+    spy_sell = _row(
+        [
+            (210, "SPY"),
+            (310, "Sell"),
+            (412, "1"),
+            (588, "Open"),
+            (842, "Limit at $500.00"),
+            (990, "Individual TOD *9440"),
+            (1939, "F038HDOP"),
+        ]
+    )
+    orders = _parse_orders_from_rows([spy_buy, spy_sell])
+    assert len(orders) == 2
+    order_map = {o.order_id: o for o in orders}
+    assert len(order_map) == 2  # no collision
+    assert "F038HKMM" in order_map
+    assert "F038HDOP" in order_map
