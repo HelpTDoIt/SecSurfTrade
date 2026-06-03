@@ -11,6 +11,7 @@ Key bindings: R = refresh now, Q = quit, C = confirm re-quote, I = ignore stall.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,50 @@ _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
 import argparse
+
+_log = logging.getLogger("monitor")
+
+
+def _setup_logging(log_dir: Path, verbose: bool) -> None:
+    """Configure file + optional console logging.
+
+    A log file is always created at ``log_dir/monitor.log``.  When *verbose*
+    is True (i.e. ``--test`` flag is active) the file receives DEBUG messages
+    and a second StreamHandler echoes them to stderr.  In normal operation only
+    INFO and above go to the file and nothing is printed to the console (so the
+    Textual TUI isn't polluted).
+
+    Safe to call multiple times — ``logging.basicConfig`` is idempotent after
+    the first call, but we configure handlers explicitly so re-runs in tests
+    don't accumulate duplicate handlers.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    # Remove any handlers added by a previous call (e.g. in tests)
+    root.handlers.clear()
+
+    fmt = logging.Formatter(
+        "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    fh = logging.FileHandler(log_dir / "monitor.log", encoding="utf-8")
+    fh.setFormatter(fmt)
+    fh.setLevel(logging.DEBUG)  # file always captures everything
+
+    root.setLevel(logging.DEBUG if verbose else logging.INFO)
+    root.addHandler(fh)
+
+    if verbose:
+        # Console output only in --test mode so Textual layout isn't disrupted
+        # in normal use.  Textual redirects stdout/stderr but not to the TUI
+        # content area, so these lines appear in the terminal before the TUI
+        # takes over.
+        ch = logging.StreamHandler()
+        ch.setFormatter(fmt)
+        ch.setLevel(logging.DEBUG)
+        root.addHandler(ch)
+
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -139,19 +184,29 @@ def detect_and_log_fills(
     for order_id, row in new_map.items():
         prev = last_filled.get(order_id, 0.0)
         delta = row.filled_qty - prev
-        if delta > 0 and journal is not None:
-            journal.write(
-                "fill",
-                {
-                    "order_id": order_id,
-                    "symbol": row.symbol,
-                    "side": row.side,
-                    "delta": delta,
-                    "filled_qty": row.filled_qty,
-                    "limit_price": row.limit_price,
-                    "status": row.status.value,
-                },
+        if delta > 0:
+            _log.info(
+                "fill: %s %s %s delta=%.0f filled=%.0f/%.0f",
+                order_id,
+                row.symbol,
+                row.side,
+                delta,
+                row.filled_qty,
+                row.qty,
             )
+            if journal is not None:
+                journal.write(
+                    "fill",
+                    {
+                        "order_id": order_id,
+                        "symbol": row.symbol,
+                        "side": row.side,
+                        "delta": delta,
+                        "filled_qty": row.filled_qty,
+                        "limit_price": row.limit_price,
+                        "status": row.status.value,
+                    },
+                )
         last_filled[order_id] = row.filled_qty
 
 
@@ -253,13 +308,16 @@ class MonitorApp(App):
     # ── Poll ─────────────────────────────────────────────────────────────
 
     def _do_poll(self) -> None:
+        _log.debug("poll start")
         try:
             rows = self._orders_adapter.get_orders()
             self._last_poll_error = ""
+            _log.info("poll ok: %d order(s) received", len(rows))
         except Exception as exc:
             err = str(exc)
             self._log_event("poll_error", {"error": err})
             self._last_poll_error = err
+            _log.error("poll error: %s", err)
             rows = []
 
         now = datetime.now(tz=timezone.utc)
@@ -568,6 +626,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--test",
+        action="store_true",
+        help=(
+            "Test / diagnostic mode: save a timestamped OCR screenshot on every "
+            "poll to logs/ocr_captures/ and write DEBUG-level entries to "
+            "logs/monitor.log.  Use this to verify OCR coverage without touching "
+            "any real order flow."
+        ),
+    )
+    parser.add_argument(
         "--quote-source",
         choices=["yahoo", "atp", "mock"],
         default="yahoo",
@@ -577,6 +645,23 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    # ── Logging + OCR debug setup ─────────────────────────────────────────
+    log_dir = Path("logs")
+    _setup_logging(log_dir, verbose=args.test)
+    _log.info(
+        "monitor starting  scan=%s  test=%s  poll=%ds",
+        args.scan,
+        args.test,
+        args.poll_seconds,
+    )
+
+    if args.test:
+        from adapters.atp_ocr import enable_debug as _enable_ocr_debug
+
+        ocr_capture_dir = log_dir / "ocr_captures"
+        _enable_ocr_debug(save_dir=ocr_capture_dir)
+        _log.info("OCR debug images will be saved to %s", ocr_capture_dir)
 
     if not args.scan and not args.plan:
         parser.error("--plan is required unless --scan is set")

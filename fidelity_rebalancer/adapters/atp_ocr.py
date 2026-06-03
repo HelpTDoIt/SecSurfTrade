@@ -25,19 +25,42 @@ import re
 import time
 from datetime import datetime, date, timezone, timedelta
 from functools import lru_cache
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 from PIL import Image, ImageGrab
 
-# Flip to True at runtime via enable_debug() to save images and print OCR hits
+# Flip to True at runtime via enable_debug() to save images and print OCR hits.
+# _DEBUG_DIR: where timestamped PNGs are written (None → current directory).
 _DEBUG = False
+_DEBUG_DIR: Path | None = None
 
 
-def enable_debug() -> None:
-    """Call before adapters run to enable image saving and OCR hit printing."""
-    global _DEBUG
+def enable_debug(save_dir: Path | str | None = None) -> None:
+    """Enable image saving and OCR hit printing.
+
+    Args:
+        save_dir: Directory to write timestamped PNG snapshots.  Created if it
+                  does not exist.  Defaults to the current working directory.
+    """
+    global _DEBUG, _DEBUG_DIR
     _DEBUG = True
+    if save_dir is not None:
+        _DEBUG_DIR = Path(save_dir)
+        _DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _debug_save(img, label: str) -> None:
+    """Save *img* (numpy array or PIL Image) to the debug directory with a timestamp."""
+    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+    fname = f"{ts}_{label}.png"
+    dest = (_DEBUG_DIR / fname) if _DEBUG_DIR else Path(fname)
+    if hasattr(img, "save"):
+        img.save(dest)
+    else:
+        Image.fromarray(img).save(dest)
+    return dest
 
 
 from adapters import Level, Level2Snapshot, OrderRow, OrderStatus
@@ -131,19 +154,16 @@ def _capture_full_window() -> np.ndarray:
     win32gui.ReleaseDC(hwnd, hwnd_dc)
 
     if _DEBUG:
-        Image.fromarray(arr).save("debug_full_window.png")
-        print(f"[OCR DEBUG] PrintWindow capture {w}x{h}px -> debug_full_window.png")
+        dest = _debug_save(arr, "full_window")
+        print(f"[OCR DEBUG] PrintWindow capture {w}x{h}px -> {dest}")
     return arr
 
 
 def _run_ocr(img: np.ndarray, label: str = "ocr") -> list[_Cell]:
     """Run RapidOCR and return _Cell list; saves debug image and prints hits if enabled."""
     if _DEBUG:
-        Image.fromarray(img).save(f"debug_{label}.png")
-        print(
-            f"[OCR DEBUG] {label}: image {img.shape[1]}x{img.shape[0]}px"
-            f" -> debug_{label}.png"
-        )
+        dest = _debug_save(img, label)
+        print(f"[OCR DEBUG] {label}: image {img.shape[1]}x{img.shape[0]}px -> {dest}")
     ocr = _ocr_engine()
     result, _ = ocr(img)
     cells = _ocr_to_cells(result or [])
@@ -490,8 +510,10 @@ def _read_l2_ocr(symbol: str) -> Level2Snapshot:
 
     if _DEBUG:
         ph, pw = panel_crop.shape[:2]
-        Image.fromarray(panel_crop).save(f"debug_l2_{sym}_crop.png")
-        print(f"[L2 DEBUG] {sym} panel x={px0}..{px1} scaled {pw}x{ph}px (2x)")
+        dest = _debug_save(panel_crop, f"l2_{sym}_crop")
+        print(
+            f"[L2 DEBUG] {sym} panel x={px0}..{px1} scaled {pw}x{ph}px (2x) -> {dest}"
+        )
 
     ocr = _ocr_engine()
     result, _ = ocr(panel_crop)
