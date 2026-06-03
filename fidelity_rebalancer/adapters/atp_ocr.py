@@ -790,10 +790,22 @@ def _read_orders_ocr() -> list[OrderRow]:
     # particular — drops out non-deterministically. But the lower rows that do
     # survive are enough to locate the grid's right/bottom bounds.
     locate_cells = _run_ocr(full, label="orders_locate")
+
+    # An entirely empty locate pass means PrintWindow returned a blank buffer —
+    # this happens transiently when FT+ is initialising or its GPU compositor
+    # hasn't rendered a frame yet.  Raise so with_retry fires rather than
+    # silently returning [] and masking the transient failure.
+    if not locate_cells:
+        raise RuntimeError(
+            "OCR locate pass returned no cells — "
+            "capture buffer may be blank (FT+ initialising or GPU flush pending)"
+        )
+
     box = _orders_crop_box(locate_cells, img_w, img_h)
 
     if box is None:
-        # No order rows detected at all (empty grid, or panel not visible).
+        # OCR ran and found text, but no order-id-shaped cells in the grid
+        # x-band — treat as a valid empty grid (no orders placed yet).
         grid_cells = [c for c in locate_cells if c.x < _ORDERS_GRID_MAX_X]
         return _parse_orders_from_rows(_cluster_rows(grid_cells))
 

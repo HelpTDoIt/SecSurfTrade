@@ -238,6 +238,7 @@ class MonitorApp(App):
         # for that amount — this yields a complete trail from first observation
         # forward rather than silently discarding pre-monitor fills.
         self._last_filled: dict[str, float] = {}
+        self._last_poll_error: str = ""
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status-panel")
@@ -254,8 +255,11 @@ class MonitorApp(App):
     def _do_poll(self) -> None:
         try:
             rows = self._orders_adapter.get_orders()
+            self._last_poll_error = ""
         except Exception as exc:
-            self._log_event("poll_error", {"error": str(exc)})
+            err = str(exc)
+            self._log_event("poll_error", {"error": err})
+            self._last_poll_error = err
             rows = []
 
         now = datetime.now(tz=timezone.utc)
@@ -347,6 +351,8 @@ class MonitorApp(App):
         ts = datetime.now(tz=timezone.utc).strftime("%H:%M:%S UTC")
         lines.append(f"[bold]SCAN MODE — live orders from ATP  {ts}[/bold]")
         lines.append("─" * 72)
+        if self._last_poll_error:
+            lines.append(f"  [red]Poll error:[/red] {self._last_poll_error}")
         if not self._order_map:
             lines.append(
                 "  [dim]No orders detected — ensure the Orders panel is visible.[/dim]"
