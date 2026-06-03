@@ -22,6 +22,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import time
 from datetime import datetime, date, timezone, timedelta
 from functools import lru_cache
 from typing import NamedTuple
@@ -66,16 +67,49 @@ def _capture_full_window() -> np.ndarray:
     - WinUI/MAUI apps that render via DirectX/GPU (content invisible to ImageGrab
       when another window is on top)
     - Windows that are maximised but behind the calling terminal
+
+    If the window is minimised Windows parks it at an off-screen position and stops
+    maintaining a full GPU render buffer — PrintWindow returns a tiny (≈158×26px)
+    thumbnail.  OCR on a thumbnail finds the title-bar text but no order rows, so
+    _orders_crop_box returns None and get_orders() silently returns [].  We restore
+    the window first so DWM composites a full frame before we capture.
     """
     import ctypes
     import win32gui
     import win32ui
+    import win32con
 
     app = get_app()
-    hwnd = app.top_window().handle
+    try:
+        hwnd = app.top_window().handle
+    except Exception:
+        # top_window() raises when FT+ is minimised / parked off-screen because
+        # pywinauto considers those windows "not visible".  windows() enumerates
+        # ALL top-level windows for the process regardless of minimised state.
+        wins = app.windows()
+        if not wins:
+            raise RuntimeError(
+                "FT+ has no accessible windows — "
+                "ensure Fidelity Trader+ is running and logged in."
+            )
+        hwnd = wins[0].handle
+
+    # Restore window if minimised or parked off-screen.  ShowWindow(SW_RESTORE)
+    # is idempotent when the window is already normal/maximised.
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        time.sleep(0.5)  # let DWM composite a fresh frame
 
     left, top, right, bottom = win32gui.GetWindowRect(hwnd)
     w, h = right - left, bottom - top
+
+    # Guard: a suspiciously small window means we captured a thumbnail, not a full
+    # render.  Raise so with_retry fires rather than silently returning no orders.
+    if w < 400 or h < 200:
+        raise RuntimeError(
+            f"FT+ window captured at {w}×{h}px — too small to contain an Orders "
+            "panel; window may still be restoring from minimised state"
+        )
 
     hwnd_dc = win32gui.GetWindowDC(hwnd)
     mem_dc = win32ui.CreateDCFromHandle(hwnd_dc)
