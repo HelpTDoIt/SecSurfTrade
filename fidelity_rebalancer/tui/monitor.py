@@ -330,7 +330,13 @@ class MonitorApp(App):
         for row in rows:
             new_map[row.order_id] = row
 
-        changed = new_map != self._order_map
+        # Compare only the stable, order-meaningful fields — NOT placed_at /
+        # last_update_at, which the OCR parser sets to datetime.now() on every
+        # parse and would make every poll appear "changed" even when nothing moved.
+        def _sig(m: dict) -> dict:
+            return {oid: (r.status, r.filled_qty, r.qty) for oid, r in m.items()}
+
+        changed = _sig(new_map) != _sig(self._order_map)
         if changed:
             self._log_event("poll", {"order_count": len(rows), "changed": True})
         else:
