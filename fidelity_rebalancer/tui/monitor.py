@@ -647,7 +647,9 @@ def main() -> None:
     args = parser.parse_args()
 
     # ── Logging + OCR debug setup ─────────────────────────────────────────
-    log_dir = Path("logs")
+    # Anchor to the package root so logs always land in fidelity_rebalancer/logs/
+    # regardless of which directory the user invokes the monitor from.
+    log_dir = _ROOT / "logs"
     _setup_logging(log_dir, verbose=args.test)
     _log.info(
         "monitor starting  scan=%s  test=%s  poll=%ds",
@@ -746,14 +748,14 @@ def main() -> None:
         except Exception:
             quote_adapter = None
 
-    journal_path = Path("logs") / "journal.jsonl"
+    journal_path = log_dir / "journal.jsonl"  # log_dir is already _ROOT / "logs"
     journal = Journal(journal_path)
     journal.write(
         "monitor_start",
         {"plan": str(plan_path) if plan_path else "scan", "poll_seconds": poll_seconds},
     )
 
-    plans_dir = plan_path.parent if plan_path else Path("plans")
+    plans_dir = plan_path.parent if plan_path else _ROOT / "plans"
     app = MonitorApp(
         plan=plan,
         orders_adapter=adapter,
