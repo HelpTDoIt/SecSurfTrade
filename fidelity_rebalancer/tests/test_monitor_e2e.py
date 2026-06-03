@@ -8,7 +8,7 @@ This test drives the full lifecycle through the real stall engine, the real
 MockATP, and the real Journal, then asserts the complete event trail:
 
     monitor_start -> poll -> state_change -> stall -> requote_suggested
-    -> requote_action -> state_change(all_sells_done) -> recompute_trigger
+    -> requote_action -> state_change(all_sells_done) -> recompute_buys
     -> monitor_stop
 
 Scenario (chunk-6 acceptance #2):
@@ -139,11 +139,11 @@ def test_e2e_journal_trail(tmp_path: Path):
         r.filled_qty * r.limit_price for r in rows if r.status == OrderStatus.Filled
     )
     journal.write(
-        "recompute_trigger",
+        "recompute_buys",
         {
             "account": ACCOUNT,
-            "actual_proceeds": round(proceeds, 2),
-            "note": "recompute_buys() not implemented (roadmap F-1) — proceeds logged only",
+            "trigger": "all_sells_terminal",
+            "proceeds": round(proceeds, 2),
         },
     )
     journal.write("monitor_stop", {"all_sells_done": all_done})
@@ -164,14 +164,14 @@ def test_e2e_journal_trail(tmp_path: Path):
         "requote_suggested",
         "requote_action",
         "state_change",
-        "recompute_trigger",
+        "recompute_buys",
         "monitor_stop",
     ]
     by_type = {e["event_type"]: e["payload"] for e in events}
     assert by_type["stall"]["chunk_id"] == "s2"
     assert by_type["requote_suggested"]["new_limit"] == pytest.approx(62.38)
     assert by_type["requote_action"]["new_chunk"] == "s2b"
-    assert by_type["recompute_trigger"]["actual_proceeds"] == pytest.approx(
+    assert by_type["recompute_buys"]["proceeds"] == pytest.approx(
         1600 * 62.39 + 25 * 62.38, abs=0.01
     )
     # every entry carries a timestamp

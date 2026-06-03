@@ -7,9 +7,20 @@ Three required cases per spec:
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
-from engine.optimizer import live_buys
+from engine.optimizer import live_buys, recompute_buys
+from state.schema import (
+    AccountInput,
+    BuyAllocationRecord,
+    Computed,
+    Inputs,
+    PositionInput,
+    RebalanceState,
+    SignalInput,
+)
 
 
 def _make_candidate(strategy, ticker, limit_price, target_alloc, current_val, total_pool):
@@ -148,3 +159,143 @@ def test_greedy_picks_largest_drift_reduction():
     assert len(result) == 1
     assert result[0]["strategy"] == "A"
     assert result[0]["shares"] == 5
+
+
+# ── recompute_buys (F-1): live re-allocation against realized proceeds ──────
+
+
+def _state(
+    *,
+    strategy_allocations: dict[str, float],
+    positions: list[tuple[str, float, float, float]],  # (symbol, qty, price, value)
+    signals: list[tuple[str, str, str]],  # (strategy, current, new)
+    buys: list[tuple[str, str, float, int]],  # (strategy, ticker, limit_price, share_target)
+    prev_closes: dict[str, float],
+    cash_reserve: float = 0.0,
+    account: str = "Acct",
+) -> RebalanceState:
+    """Build a minimal single-account RebalanceState for recompute_buys."""
+    acct = AccountInput(
+        name=account,
+        type="retirement",
+        cash_reserve=cash_reserve,
+        positions=[
+            PositionInput(symbol=s, quantity=q, price=p, value=v)
+            for (s, q, p, v) in positions
+        ],
+        cash_spaxx=next((v for (s, q, p, v) in positions if s == "SPAXX**"), 0.0),
+        strategy_allocations=strategy_allocations,
+    )
+    sigs = [
+        SignalInput(account=account, strategy=st, current_ticker=cur, new_ticker=new)
+        for (st, cur, new) in signals
+    ]
+    buy_recs = [
+        BuyAllocationRecord(
+            account=account,
+            strategy=st,
+            ticker=tk,
+            dollar_target=lim * sh,
+            limit_price=lim,
+            share_target=sh,
+            est_cost=lim * sh,
+        )
+        for (st, tk, lim, sh) in buys
+    ]
+    computed = Computed(
+        cash_ok={account: True},
+        one_share_total={account: 0.0},
+        sells=[],
+        buy_allocations=buy_recs,
+        sell_chunks=[],
+        buy_chunks=[],
+    )
+    return RebalanceState(
+        generated_at=datetime.now(tz=timezone.utc),
+        generator="engine",
+        inputs=Inputs(accounts=[acct], signals=sigs, prev_closes=prev_closes),
+        computed=computed,
+    )
+
+
+def _two_trading_state() -> RebalanceState:
+    """Two trading strategies (each sells one ETF, buys another), 50/50 split.
+
+    total_pool = 200_000 (EEM 100k + SMH 100k), no deployable cash.
+    Initial buy targets are 1000 shares each at $100 (full-estimate plan).
+    """
+    return _state(
+        strategy_allocations={"Alpha": 0.5, "Beta": 0.5},
+        positions=[
+            ("EEM", 1000, 100.0, 100_000.0),
+            ("SMH", 500, 200.0, 100_000.0),
+            ("SPAXX**", 0, 1.0, 0.0),
+        ],
+        signals=[("Alpha", "EEM", "VOO"), ("Beta", "SMH", "QQQ")],
+        buys=[("Alpha", "VOO", 100.0, 1000), ("Beta", "QQQ", 100.0, 1000)],
+        prev_closes={"VOO": 100.0, "QQQ": 100.0, "EEM": 100.0, "SMH": 200.0},
+    )
+
+
+def test_recompute_full_proceeds_matches_estimate():
+    """Realized proceeds == estimate → share targets unchanged (1000 each)."""
+    state = _two_trading_state()
+    revised = recompute_buys(state, "Acct", 200_000.0)
+    by_strat = {r.strategy: r for r in revised}
+    assert by_strat["Alpha"].share_target == 1000
+    assert by_strat["Beta"].share_target == 1000
+
+
+def test_recompute_short_proceeds_shrinks_targets():
+    """Realized proceeds below estimate → targets shrink and re-minimize drift.
+
+    180_000 / $100 split 50/50 → 900 shares each (down from 1000).
+    """
+    state = _two_trading_state()
+    revised = recompute_buys(state, "Acct", 180_000.0)
+    by_strat = {r.strategy: r.share_target for r in revised}
+    assert by_strat == {"Alpha": 900, "Beta": 900}
+    # Total cost never exceeds the realized pool (hard budget).
+    assert sum(r.est_cost for r in revised) <= 180_000.0 + 1e-6
+
+
+def test_recompute_rebalance_leg_uses_held_value_as_current():
+    """A non-trading (rebalance) leg keeps its holding, so deficit = target − held.
+
+    Hold strategy holds $50k of SMH; target is $100k (total_pool 100k @ 100%).
+    Deploying $50k cash buys the $50k deficit → 250 shares (NOT 500).
+    """
+    state = _state(
+        strategy_allocations={"Hold": 1.0},
+        positions=[
+            ("SMH", 250, 200.0, 50_000.0),
+            ("SPAXX**", 0, 1.0, 50_000.0),
+        ],
+        signals=[("Hold", "SMH", "SMH")],  # new == current → not trading
+        buys=[("Hold", "SMH", 200.0, 250)],
+        prev_closes={"SMH": 200.0},
+    )
+    revised = recompute_buys(state, "Acct", 0.0)  # no sells; deploy cash only
+    assert len(revised) == 1
+    assert revised[0].strategy == "Hold"
+    assert revised[0].share_target == 250
+
+
+def test_recompute_skips_leg_already_at_target():
+    """A rebalance leg already at/above its target has deficit ≤ 0 → dropped."""
+    state = _state(
+        strategy_allocations={"Hold": 1.0},
+        positions=[
+            ("SMH", 500, 200.0, 100_000.0),  # already == target
+            ("SPAXX**", 0, 1.0, 0.0),
+        ],
+        signals=[("Hold", "SMH", "SMH")],
+        buys=[("Hold", "SMH", 200.0, 0)],
+        prev_closes={"SMH": 200.0},
+    )
+    assert recompute_buys(state, "Acct", 0.0) == []
+
+
+def test_recompute_unknown_account_returns_empty():
+    state = _two_trading_state()
+    assert recompute_buys(state, "Nonexistent", 100_000.0) == []

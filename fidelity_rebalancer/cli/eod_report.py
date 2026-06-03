@@ -228,6 +228,21 @@ def _notable_line(entry: dict) -> str:
         if proc:
             parts.append(f"proceeds={proc}")
 
+    elif etype == "recompute_buys":
+        account = payload.get("account", "")
+        proc = _proceeds_from_payload(payload)
+        trig = payload.get("trigger", "")
+        if account:
+            parts.append(f"account={account}")
+        if trig:
+            parts.append(f"trigger={trig}")
+        if proc:
+            parts.append(f"proceeds={proc}")
+        after = payload.get("after")
+        if isinstance(after, dict) and after:
+            tgt = " ".join(f"{k}={v}" for k, v in after.items())
+            parts.append(f"targets[{tgt}]")
+
     elif etype == "poll_error":
         err = payload.get("error", "")
         if err:

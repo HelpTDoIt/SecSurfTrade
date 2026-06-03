@@ -74,8 +74,16 @@ from textual.containers import Container, Vertical
 
 from cli import resolve_path
 from adapters import OrderRow, OrderStatus, QuoteSnapshot
+from engine.optimizer import recompute_buys
 from engine.stall import RequoteSuggestion, StallEvent, detect_stalls, recommend_requote
-from state.schema import ChunkRecord, PlanOutput, RebalanceState, StrategyDecision
+from engine.sweep import should_sweep
+from state.schema import (
+    BuyAllocationRecord,
+    ChunkRecord,
+    PlanOutput,
+    RebalanceState,
+    StrategyDecision,
+)
 
 
 # ── Journal ───────────────────────────────────────────────────────────────
@@ -150,6 +158,20 @@ def _actual_proceeds(
         if row and row.status == OrderStatus.Filled:
             total += row.filled_qty * row.limit_price
     return total
+
+
+def _market_minutes(now: datetime | None = None) -> int | None:
+    """Minutes since market open (9:30 ET), or None outside 9:30–16:00.
+
+    Mirrors ``cli/strategy.py``: a naive *local* wall-clock time is interpreted
+    as ET — there is no zoneinfo anywhere in the codebase.  Used only for the
+    EOD-sweep clock half of the recompute trigger; journaling stays on UTC.
+    """
+    now = now or datetime.now()
+    m = (now.hour - 9) * 60 + (now.minute - 30)
+    if m < 0 or m > 390:
+        return None
+    return m
 
 
 # ── Fill detection ────────────────────────────────────────────────────────
@@ -372,18 +394,89 @@ class MonitorApp(App):
                     },
                 )
 
-        # Check for recompute triggers
+        # Check for recompute triggers (F-1): fire once per account when its
+        # sells are all terminal (proceeds fully known) OR the EOD-sweep clock
+        # has passed (fallback — recompute on whatever proceeds are known).
+        mkt_min = _market_minutes()
         for account, sell_ids in self._sell_ids_by_account.items():
-            if account in self._recomputed_accounts:
-                continue
-            if sell_ids and _all_sells_terminal(account, new_map, sell_ids):
+            fire, reason = self._should_recompute(account, sell_ids, new_map, mkt_min)
+            if fire:
                 proceeds = _actual_proceeds(account, new_map, sell_ids)
-                self._log_event(
-                    "recompute_trigger", {"account": account, "proceeds": proceeds}
-                )
+                self._recompute_account(account, proceeds, reason)
                 self._recomputed_accounts.add(account)
 
         self._refresh_display(now)
+
+    def _should_recompute(
+        self,
+        account: str,
+        sell_ids: list[str],
+        order_map: dict[str, OrderRow],
+        mkt_minutes: int | None,
+    ) -> tuple[bool, str]:
+        """Decide whether to recompute buys for ``account`` this poll.
+
+        Returns ``(fire, reason)``.  Fires when the account's sells are all
+        terminal (proceeds fully known) OR the EOD-sweep clock has passed
+        (fallback).  Already-recomputed accounts and accounts with no sells
+        never fire.  ``unfilled_frac`` is pinned to 0.0 so only the clock half
+        of ``should_sweep`` can fire — the recompute trigger is *terminal OR
+        clock*, never fill-fraction.
+        """
+        if account in self._recomputed_accounts or not sell_ids:
+            return False, ""
+        if _all_sells_terminal(account, order_map, sell_ids):
+            return True, "all_sells_terminal"
+        cfg = self._state.inputs.config
+        if should_sweep(
+            mkt_minutes,
+            0.0,
+            sweep_time_minutes=cfg.sweep_time_minutes,
+            sweep_unfilled_frac=cfg.sweep_unfilled_frac,
+        ):
+            return True, "eod_sweep_clock"
+        return False, ""
+
+    def _recompute_account(self, account: str, proceeds: float, trigger: str) -> None:
+        """Re-run the drift allocator on realized proceeds and journal the result.
+
+        Per F-1 the revised allocations replace this account's in-memory
+        ``buy_allocations``; chunks are intentionally NOT regenerated (no
+        re-driving of order flow).  The hard rule holds: nothing is placed,
+        modified, or cancelled — this only records a revised plan for the human.
+        """
+        before = {
+            ba.strategy: ba.share_target
+            for ba in self._state.computed.buy_allocations
+            if ba.account == account
+        }
+        revised: list[BuyAllocationRecord] = recompute_buys(
+            self._state, account, proceeds
+        )
+        # Replace this account's allocations in place; leave other accounts intact.
+        self._state.computed.buy_allocations = [
+            ba for ba in self._state.computed.buy_allocations if ba.account != account
+        ] + revised
+        self._log_event(
+            "recompute_buys",
+            {
+                "account": account,
+                "trigger": trigger,
+                "proceeds": round(proceeds, 2),
+                "before": before,
+                "after": {ba.strategy: ba.share_target for ba in revised},
+                "allocations": [
+                    {
+                        "strategy": ba.strategy,
+                        "ticker": ba.ticker,
+                        "share_target": ba.share_target,
+                        "dollar_target": round(ba.dollar_target, 2),
+                        "limit_price": ba.limit_price,
+                    }
+                    for ba in revised
+                ],
+            },
+        )
 
     def _detect_and_log_fills(self, new_map: dict[str, "OrderRow"]) -> None:
         """Delegate to the module-level helper, updating self._last_filled in place."""

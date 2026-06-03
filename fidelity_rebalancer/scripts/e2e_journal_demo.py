@@ -113,7 +113,8 @@ order_map = {r.order_id: r for r in orders2}
 if _all_sells_terminal("Demo Account", order_map, ["s1", "s2"]):
     proceeds = _actual_proceeds("Demo Account", order_map, ["s1", "s2"])
     j.write(
-        "recompute_trigger", {"account": "Demo Account", "actual_proceeds": proceeds}
+        "recompute_buys",
+        {"account": "Demo Account", "trigger": "all_sells_terminal", "proceeds": proceeds},
     )
     print(
         f"       All sells complete — recompute triggered. Proceeds: ${proceeds:,.2f}"
