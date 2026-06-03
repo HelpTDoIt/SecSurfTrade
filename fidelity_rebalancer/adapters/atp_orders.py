@@ -20,6 +20,7 @@ What IS readable via UIA (for informational purposes only):
 
 Run scripts/atp_smoke.py --debug-tree to confirm the current layout.
 """
+
 from __future__ import annotations
 
 import re
@@ -28,9 +29,7 @@ from adapters import OrderRow, OrderStatus
 from adapters._atp_connect import get_app, with_retry
 from adapters._atp_ui import get_panel_container, sv_children
 
-_STATUS_COUNT_RE = re.compile(
-    r"Open\s+(\d+)\s*-\s*Filled\s+(\d+)", re.IGNORECASE
-)
+_STATUS_COUNT_RE = re.compile(r"Open\s+(\d+)\s*-\s*Filled\s+(\d+)", re.IGNORECASE)
 
 
 def _read_status_counts(controls: list) -> tuple[int, int]:
@@ -70,8 +69,22 @@ def _read_orders() -> list[OrderRow]:
 class ATPOrdersAdapter:
     """
     Attempts to read order rows from Fidelity Trader+ via UIA.
-    Currently raises LookupError — see module docstring for explanation.
+
+    Currently raises NotImplementedError at construction — see module docstring.
+    The Telerik MAUI RadMauiScrollView does not expose per-row order data via
+    UIA so every get_orders() call would raise LookupError anyway.  Raising in
+    __init__ lets the monitor's UIA → OCR → Mock fallback chain skip this adapter
+    immediately rather than burning 3 retry attempts on a known-broken path.
+
+    Kept in the codebase for the Export-button path when that is implemented.
     """
+
+    def __init__(self) -> None:
+        raise NotImplementedError(
+            "ATPOrdersAdapter: per-row order data is not accessible via Windows UIA "
+            "in Fidelity Trader+ (Telerik MAUI RadMauiScrollView blocks child access). "
+            "Use OCROrdersAdapter instead."
+        )
 
     def get_orders(self) -> list[OrderRow]:
         return with_retry(_read_orders, label="Orders panel")
