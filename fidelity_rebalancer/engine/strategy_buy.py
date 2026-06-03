@@ -27,6 +27,7 @@ from adapters import Level2Snapshot, QuoteSnapshot
 from engine import observability
 from engine.chunker import build_buy_chunks, round_to_tick, tick
 from engine.decision_context import DecisionContext
+from engine.size_context import PositionSizeContext
 from engine.spread_context import SpreadContext
 from engine.strategy_sell import get_adv  # cached per-symbol; reuse
 from state.schema import BuyAllocationRecord, BuyStrategy, ChunkRecord
@@ -74,7 +75,7 @@ def _spread_bullet(f: _Features) -> str:
 def _adv_bullet(f: _Features, buy: BuyAllocationRecord) -> str:
     if f.pct_of_adv is None:
         return "ADV: unknown — sizing assumes book depth alone."
-    return f"Order is {f.pct_of_adv:.2f}% of 30-day ADV ({buy.share_target} sh)."
+    return f"Order is {f.pct_of_adv:.2f}% of ADV ({buy.share_target} sh)."
 
 
 def _vol_bullet(f: _Features) -> str:
@@ -88,16 +89,19 @@ def _decide(
     buy: BuyAllocationRecord,
     quote: QuoteSnapshot,
     spread_ctx: Optional[SpreadContext] = None,
+    size_ctx: Optional[PositionSizeContext] = None,
 ) -> tuple[str, str, float, list[str], float]:
     """
     Returns (rule, urgency, limit_price, reasoning, depth_pct_override).
     `depth_pct_override` is the per-chunk top-3-depth cap (default 0.25).
+    size_ctx: per-class %ADV cutoffs (G-5).  None = legacy 3% default.
     """
     sc = spread_ctx or SpreadContext.default()
+    zc = size_ctx or PositionSizeContext.default()
     tight = f.spread_bps < sc.tight_bps
     wide  = f.spread_bps > sc.wide_bps
     healthy_vol = f.rel_vol is not None and f.rel_vol > 1.0
-    large_pos   = f.pct_of_adv is not None and f.pct_of_adv > 3.0
+    large_pos   = f.pct_of_adv is not None and f.pct_of_adv > zc.buy_large_pct
 
     # Rule 1: tight spread + good volume → ask
     if tight and healthy_vol:
@@ -125,7 +129,7 @@ def _decide(
         return ("large_position", "patient", limit, [
             _spread_bullet(f),
             _adv_bullet(f, buy),
-            "Large position (>3% ADV) — smaller chunks to limit market impact.",
+            f"Large position (>{zc.buy_large_pct:g}% ADV) — smaller chunks to limit market impact.",
             f"LIMIT at ask−1 tick ${limit:.4f}.",
         ], 0.125)   # half the default depth cap
 
@@ -244,7 +248,9 @@ def generate_buy_strategy(
     adv = ctx.adv if ctx.adv is not None else get_adv(buy.ticker)
 
     feats = _features(buy, quote, adv, vwap=ctx.vwap)
-    rule, urgency, limit_price, reasoning, depth_override = _decide(feats, buy, quote, ctx.spread_ctx)
+    rule, urgency, limit_price, reasoning, depth_override = _decide(
+        feats, buy, quote, ctx.spread_ctx, size_ctx=ctx.size_ctx,
+    )
 
     urgency, limit_price, reasoning = _escalate_buy(
         urgency, limit_price, reasoning, quote, feats.px_tick, ctx.market_minutes,

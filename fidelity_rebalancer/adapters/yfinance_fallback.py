@@ -11,7 +11,9 @@ Data quality
 yfinance pulls from Yahoo Finance which aggregates from multiple exchanges.
 Bid/ask reflects the most recent NBBO snapshot (typically < 60 s stale during
 market hours).  prev_close, ADV 10D/90D, and ex-dividend date are reliable.
-VWAP is not available from yfinance and is returned as 0.0.
+VWAP is not a watchlist field (rows return 0.0); ``approx_intraday_vwap`` below
+reconstructs an APPROXIMATE intraday VWAP from 1-minute bars so the VWAP rules
+can fire on the yfinance path (distinct from ATP's exact streamed VWAP).
 
 Install
 -------
@@ -172,3 +174,42 @@ def adv_to_vol5min(avg_vol_10d: int) -> float:
     if avg_vol_10d <= 0:
         return 0.0
     return avg_vol_10d / _PERIODS_PER_DAY
+
+
+# ── Approximate intraday VWAP (G-3) ────────────────────────────────────────
+
+def approx_intraday_vwap(symbol: str, *, period: str = "1d") -> float | None:
+    """Approximate intraday VWAP for ``symbol`` from yfinance 1-minute bars.
+
+    yfinance does not expose VWAP directly (the watchlist row carries 0.0), so
+    the VWAP-relative strategy rules cannot fire on the ``--source yfinance``
+    path.  This reconstructs an APPROXIMATE intraday VWAP =
+    Σ(typical_price · volume) / Σ(volume) over today's 1-minute candles, using
+    the pure math in ``engine.vwap``.
+
+    This is explicitly an approximation and is NOT the same as ATP's exact
+    streamed intraday VWAP — bar granularity, Yahoo's consolidated tape, and the
+    (high+low+close)/3 typical-price proxy all introduce small differences.
+
+    Returns the VWAP float, or None when yfinance is unavailable, the history is
+    empty, or there is no usable volume (so callers treat it uniformly as
+    "VWAP unavailable").  Performs no mutation and only reads market data.
+    """
+    from engine.vwap import vwap_from_columns
+
+    try:
+        yf = _require_yf()
+    except ImportError:
+        return None
+    try:
+        hist = yf.Ticker(symbol.upper()).history(period=period, interval="1m")
+        if hist is None or hist.empty:
+            return None
+        return vwap_from_columns(
+            hist["High"].tolist(),
+            hist["Low"].tolist(),
+            hist["Close"].tolist(),
+            hist["Volume"].tolist(),
+        )
+    except Exception:
+        return None
