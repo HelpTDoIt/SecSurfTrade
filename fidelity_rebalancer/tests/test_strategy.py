@@ -13,6 +13,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from adapters import Level, Level2Snapshot, QuoteSnapshot
+from engine.decision_context import DecisionContext
 from engine.strategy_buy import generate_buy_strategy
 from engine.strategy_sell import generate_sell_strategy
 from state.schema import BuyAllocationRecord, ChunkRecord, SellRecord
@@ -83,7 +84,7 @@ def test_sell_tight_spread_small_position():
         book,
         vol5min=500_000.0,
         today=date(2026, 4, 15),
-        adv=100_000_000,  # 1% ADV
+        ctx=DecisionContext(adv=100_000_000),  # 1% ADV
     )
     assert strat.rule == "tight_spread_small_position"
     assert strat.urgency == "normal"
@@ -113,7 +114,7 @@ def test_sell_tight_spread_large_position():
         book,
         vol5min=500_000.0,
         today=date(2026, 4, 15),
-        adv=100_000_000,  # 6% ADV
+        ctx=DecisionContext(adv=100_000_000),  # 6% ADV
     )
     assert strat.rule == "tight_spread_large_position"
     assert strat.urgency == "patient"
@@ -141,7 +142,7 @@ def test_sell_wide_spread():
         book,
         vol5min=10_000.0,
         today=date(2026, 4, 15),
-        adv=100_000,
+        ctx=DecisionContext(adv=100_000),
     )
     assert strat.rule == "wide_spread"
     assert strat.urgency == "patient"
@@ -170,7 +171,7 @@ def test_sell_down_day():
         book,
         vol5min=20_000.0,
         today=date(2026, 4, 15),
-        adv=1_000_000,
+        ctx=DecisionContext(adv=1_000_000),
     )
     assert strat.rule == "down_day"
     assert strat.urgency == "patient"
@@ -198,7 +199,7 @@ def test_sell_up_day():
         book,
         vol5min=20_000.0,
         today=date(2026, 4, 15),
-        adv=1_000_000,
+        ctx=DecisionContext(adv=1_000_000),
     )
     assert strat.rule == "up_day"
     assert strat.urgency == "aggressive"
@@ -226,7 +227,7 @@ def test_sell_default_midpoint():
         book,
         vol5min=20_000.0,
         today=date(2026, 4, 15),
-        adv=1_000_000,
+        ctx=DecisionContext(adv=1_000_000),
     )
     assert strat.rule == "default"
     assert strat.urgency == "normal"
@@ -261,7 +262,7 @@ def test_buy_tight_spread_good_volume():
         quote,
         book,
         vol5min=500_000.0,
-        adv=100_000_000,
+        ctx=DecisionContext(adv=100_000_000),
     )
     assert strat.rule == "tight_spread_good_volume"
     assert strat.urgency == "normal"
@@ -291,7 +292,7 @@ def test_buy_wide_spread():
         quote,
         book,
         vol5min=10_000.0,
-        adv=1_000_000,
+        ctx=DecisionContext(adv=1_000_000),
     )
     assert strat.rule == "wide_spread"
     assert strat.urgency == "patient"
@@ -319,7 +320,7 @@ def test_buy_large_position():
         quote,
         book,
         vol5min=20_000.0,
-        adv=100_000,  # 4% ADV
+        ctx=DecisionContext(adv=100_000),  # 4% ADV
     )
     assert strat.rule == "large_position"
     assert strat.urgency == "patient"
@@ -349,7 +350,7 @@ def test_buy_default():
         quote,
         book,
         vol5min=20_000.0,
-        adv=10_000_000,  # rel_vol 0.02 (low), pct_of_adv=0.001%
+        ctx=DecisionContext(adv=10_000_000),  # rel_vol 0.02 (low), pct_of_adv=0.001%
     )
     assert strat.rule == "default"
     assert strat.urgency == "normal"
@@ -383,7 +384,7 @@ def test_strategy_round_trip_serializes_byte_identical():
         book,
         vol5min=500_000.0,
         today=date(2026, 4, 15),
-        adv=100_000_000,
+        ctx=DecisionContext(adv=100_000_000),
     )
     json1 = strat.model_dump_json()
     strat2 = type(strat).model_validate_json(json1)

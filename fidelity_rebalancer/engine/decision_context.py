@@ -6,7 +6,7 @@ call sites no longer need to thread four separate keyword arguments.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from engine.spread_context import SpreadContext
@@ -20,8 +20,8 @@ class DecisionContext:
     ------
     market_minutes : int | None
         Minutes elapsed since market open (9:30 ET).  None = unknown.
-    spread_ctx : SpreadContext
-        Symbol-calibrated spread thresholds.
+    spread_ctx : SpreadContext | None
+        Symbol-calibrated spread thresholds.  None = SpreadContext.default().
     vwap : float | None
         Intraday VWAP from the live feed (ATP only).  None = unavailable.
     adv : float | None
@@ -33,8 +33,8 @@ class DecisionContext:
         further signature change.
     """
 
-    market_minutes: Optional[int]
-    spread_ctx: SpreadContext
-    vwap: Optional[float]
-    adv: Optional[float]
-    sigma_bps: Optional[float] = field(default=None)
+    market_minutes: Optional[int] = None
+    spread_ctx: Optional[SpreadContext] = None
+    vwap: Optional[float] = None
+    adv: Optional[float] = None
+    sigma_bps: Optional[float] = None

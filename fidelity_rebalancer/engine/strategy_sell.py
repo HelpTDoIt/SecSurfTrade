@@ -250,45 +250,26 @@ def generate_sell_strategy(
     l2: Level2Snapshot,
     vol5min: float,
     *,
+    ctx: DecisionContext,
     today: Optional[date] = None,
     exdiv_calendar: Optional[dict] = None,
     max_pct_of_top3_depth: float = 0.25,
     max_pct_of_5min_volume: float = 0.15,
-    ctx: Optional[DecisionContext] = None,
-    # Legacy flat kwargs kept for backwards compat; ignored when ctx is supplied
-    adv: Optional[float] = None,
-    spread_ctx: Optional[SpreadContext] = None,
-    vwap: Optional[float] = None,
-    market_minutes: Optional[int] = None,
 ) -> tuple[SellStrategy, list[ChunkRecord]]:
     """
     Generate a sell strategy + matching chunk records for a single SellRecord.
     Returns (strategy, chunk_records).
 
-    Preferred call: pass ``ctx=DecisionContext(...)`` bundling the four market
-    inputs.  The legacy flat kwargs (adv, spread_ctx, vwap, market_minutes) are
-    still accepted for backward-compatibility and are used when ctx is None.
+    Market inputs (adv, spread_ctx, vwap, market_minutes) arrive bundled in the
+    required ``ctx`` (engine.decision_context.DecisionContext).
     """
     today = today or date.today()
 
-    # Resolve inputs from ctx or legacy flat kwargs
-    if ctx is not None:
-        _adv           = ctx.adv
-        _spread_ctx    = ctx.spread_ctx
-        _vwap          = ctx.vwap
-        _market_minutes = ctx.market_minutes
-    else:
-        _adv           = adv
-        _spread_ctx    = spread_ctx
-        _vwap          = vwap
-        _market_minutes = market_minutes
+    adv = ctx.adv if ctx.adv is not None else get_adv(sell.ticker)
 
-    if _adv is None:
-        _adv = get_adv(sell.ticker)
-
-    feats = _features(sell, quote, today, _adv, exdiv_calendar, vwap=_vwap)
+    feats = _features(sell, quote, today, adv, exdiv_calendar, vwap=ctx.vwap)
     rule, urgency, limit_price, reasoning = _decide(
-        feats, sell, quote, _spread_ctx, market_minutes=_market_minutes,
+        feats, sell, quote, ctx.spread_ctx, market_minutes=ctx.market_minutes,
     )
 
     if rule == "gap_capture":
