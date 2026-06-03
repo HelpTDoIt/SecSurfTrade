@@ -35,6 +35,7 @@ from engine.chunker import (
     tick,
 )
 from engine.decision_context import DecisionContext
+from engine.escalation import _escalate
 from engine.spread_context import SpreadContext
 from state.schema import ChunkRecord, SellRecord, SellStrategy
 
@@ -276,6 +277,14 @@ def generate_sell_strategy(
         feats, sell, quote, ctx.spread_ctx, market_minutes=ctx.market_minutes,
     )
 
+    # Time-of-day urgency ramp (symmetric with buys; nudges toward the bid).
+    # gap_capture fires only in the first 30 min while escalation starts at
+    # 90 min, so the two never overlap — escalation is a no-op for gap_capture.
+    urgency, limit_price, reasoning = _escalate(
+        "sell", urgency, limit_price, reasoning, quote, feats.px_tick,
+        ctx.market_minutes,
+    )
+
     if rule == "gap_capture":
         gap_price = round_to_tick(feats.adj_prev_close * 0.99, quote.bid)
         standard_price = round_to_tick(feats.midpoint or quote.last, quote.bid)
@@ -311,6 +320,7 @@ def generate_sell_strategy(
         _log.warning("sell %s: ADV unavailable — sizing from book depth only", sell.ticker)
     if not (quote.bid or quote.ask):
         _log.warning("sell %s: no live bid/ask — limit derived from fallback price", sell.ticker)
+    # rule/urgency/limit_price below are post-escalation (the entered values).
     # Per-ticker decision detail -> DEBUG (verbose-gated) + structured record.
     _log.debug(
         "sell %s: rule=%s urgency=%s limit=$%.4f chunks=%d "

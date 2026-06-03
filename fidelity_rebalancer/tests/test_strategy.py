@@ -565,3 +565,156 @@ def test_select_l2_symbols_all_open_within_cap():
     use, recommend = _select_l2_symbols(ranked, {"aaa", "BBB", "ccc"}, cap=7)
     assert use == ["AAA", "BBB", "CCC"]  # case-insensitive match
     assert recommend == []
+
+
+# ── Step 3 (G-4): symmetric sell urgency escalation ───────────────────────
+# Mirror of TestBuyUrgencyEscalation (tests/test_optimizations.py): the same
+# time-of-day ramp, but sells nudge the limit toward the BID (buys → ASK).
+# Direct-helper cases pin the checkpoint math; the wired case proves the ramp
+# reaches the public generator and that recorded values are post-escalation.
+
+
+class TestSellUrgencyEscalation:
+    def _q(self):
+        # bid=100.00, ask=100.02, px_tick=0.01
+        return _quote(
+            "SPY", bid=100.00, ask=100.02, last=100.01, prev_close=100.00
+        )
+
+    def test_no_escalation_before_90min(self):
+        """<90 min into the session: rule's posture/limit pass through."""
+        from engine.escalation import _escalate
+
+        urg, lim, reasoning = _escalate(
+            "sell", "patient", 100.10, [], self._q(), 0.01, market_minutes=60
+        )
+        assert urg == "patient"
+        assert lim == pytest.approx(100.10)
+        assert reasoning == []
+
+    def test_escalation_at_90min_to_normal(self):
+        """First checkpoint (90 min): patient → normal, limit 75% toward bid."""
+        from engine.escalation import _escalate
+
+        urg, lim, reasoning = _escalate(
+            "sell", "patient", 100.10, [], self._q(), 0.01, market_minutes=90
+        )
+        assert urg == "normal"
+        # 100.10 + (100.00 - 100.10) * 0.75 = 100.025 → 100.02 toward bid
+        assert lim == pytest.approx(100.02)
+        assert lim < 100.10  # nudged toward the bid
+        assert len(reasoning) == 1
+
+    def test_escalation_at_210min_to_aggressive_at_bid(self):
+        """Second checkpoint (210 min): any → aggressive, limit AT the bid."""
+        from engine.escalation import _escalate
+
+        urg, lim, _ = _escalate(
+            "sell", "patient", 100.10, [], self._q(), 0.01, market_minutes=210
+        )
+        assert urg == "aggressive"
+        assert lim == pytest.approx(100.00)  # at the bid
+
+    def test_escalation_at_330min_to_bid_minus_one_tick(self):
+        """Past the last checkpoint (330 min): aggressive, limit at bid − 1 tick."""
+        from engine.escalation import _escalate
+
+        urg, lim, reasoning = _escalate(
+            "sell", "normal", 100.10, [], self._q(), 0.01, market_minutes=330
+        )
+        assert urg == "aggressive"
+        assert lim == pytest.approx(99.99)  # bid − 1 tick
+        assert "bid" in " ".join(reasoning)
+
+    def test_no_escalation_outside_market(self):
+        """market_minutes None (outside RTH) leaves everything untouched."""
+        from engine.escalation import _escalate
+
+        urg, lim, _ = _escalate(
+            "sell", "patient", 100.10, [], self._q(), 0.01, market_minutes=None
+        )
+        assert urg == "patient"
+        assert lim == pytest.approx(100.10)
+
+    def test_already_aggressive_no_downgrade(self):
+        """An already-aggressive rule isn't downgraded at an intermediate point."""
+        from engine.escalation import _escalate
+
+        urg, lim, reasoning = _escalate(
+            "sell", "aggressive", 100.00, [], self._q(), 0.01, market_minutes=120
+        )
+        assert urg == "aggressive"
+        assert lim == pytest.approx(100.00)  # limit unchanged
+        assert reasoning == []  # no escalation bullet added
+
+    def test_escalation_wired_through_generate(self):
+        """Acceptance: a stalled-near-close sell escalates urgency + limit toward
+        the bid through the public generator; the recorded reasoning carries the
+        escalation bullet (recorded == entered values)."""
+        sell = SellRecord(
+            account="Test Retirement",
+            strategy="Strategy Alpha",
+            ticker="ABC",
+            shares=200,
+            limit_price=100.0,
+            est_proceeds=20_000,
+        )
+        # Wide spread → wide_spread rule (patient, limit at bid+1 tick = 99.91).
+        quote = _quote(
+            "ABC", bid=99.90, ask=100.10, last=100.00, prev_close=100.00, volume=50_000
+        )
+        book = _l2("ABC", [(99.90, 200)] * 3, [(100.10, 200)] * 3)
+
+        strat_early, _ = generate_sell_strategy(
+            sell, quote, book, vol5min=10_000.0, today=date(2026, 4, 15),
+            ctx=DecisionContext(adv=100_000, market_minutes=60),
+        )
+        strat_mid, _ = generate_sell_strategy(
+            sell, quote, book, vol5min=10_000.0, today=date(2026, 4, 15),
+            ctx=DecisionContext(adv=100_000, market_minutes=120),
+        )
+        strat_late, _ = generate_sell_strategy(
+            sell, quote, book, vol5min=10_000.0, today=date(2026, 4, 15),
+            ctx=DecisionContext(adv=100_000, market_minutes=350),
+        )
+
+        # Before 90 min: untouched patient baseline.
+        assert strat_early.urgency == "patient"
+        assert strat_early.limit_price == pytest.approx(99.91)
+
+        # Mid-session: escalated to normal, limit nudged toward the bid (99.90).
+        assert strat_mid.urgency == "normal"
+        assert strat_mid.limit_price == pytest.approx(99.90)
+        assert strat_mid.limit_price < strat_early.limit_price
+
+        # Near close: aggressive, limit one tick past the bid; the strategy's
+        # reasoning (what gets recorded) reflects the post-escalation state.
+        assert strat_late.urgency == "aggressive"
+        assert strat_late.limit_price == pytest.approx(99.89)
+        assert any("escalation" in b.lower() for b in strat_late.reasoning)
+
+    def test_buy_mode_matches_legacy_escalate_buy(self):
+        """Guard for the post-merge dedupe: the shared _escalate('buy', ...) is
+        behaviourally identical to strategy_buy._escalate_buy (urgency + limit +
+        bullet count) across the checkpoint boundaries, so _escalate_buy can
+        later delegate to it and be deleted."""
+        from engine.escalation import _escalate
+        from engine.strategy_buy import _escalate_buy
+
+        quote = self._q()
+        cases = [
+            ("patient", 100.00, 60),
+            ("patient", 100.00, 90),
+            ("patient", 100.00, 120),
+            ("patient", 99.90, 210),
+            ("normal", 100.00, 330),
+            ("normal", 100.00, 350),
+            ("patient", 100.00, None),
+            ("aggressive", 100.02, 120),
+        ]
+        for urg, lim, mm in cases:
+            shared = _escalate("buy", urg, lim, [], quote, 0.01, mm)
+            legacy = _escalate_buy(urg, lim, [], quote, 0.01, mm)
+            assert shared[0] == legacy[0], f"urgency mismatch at mm={mm}"
+            assert shared[1] == pytest.approx(legacy[1]), f"limit mismatch at mm={mm}"
+            assert len(shared[2]) == len(legacy[2]), f"bullet count mismatch at mm={mm}"
