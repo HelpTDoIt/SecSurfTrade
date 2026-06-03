@@ -5,7 +5,10 @@ All functions are pure (no I/O, no side effects).
 
 from __future__ import annotations
 
+import logging
 import math
+
+_log = logging.getLogger(__name__)
 
 
 def _fv(s: str) -> float:
@@ -190,6 +193,22 @@ def calc_trades(
             )
 
     est_sell = sum(x["est_proceeds"] for x in sells)
+    # INFO stays non-sensitive: counts + the cash gate, no tickers or dollars.
+    _log.info(
+        "calc_trades: %d trading / %d holding strategies, cash_ok=%s, %d sell(s)",
+        len(trading),
+        len(holding),
+        cash_ok,
+        len(sells),
+    )
+    # Dollar figures are position-revealing -> DEBUG only (verbose-gated file).
+    _log.debug(
+        "calc_trades $: total_pool=%.2f depl_cash=%.2f est_sell=%.2f one_share=%.4f",
+        total_pool,
+        depl_cash,
+        est_sell,
+        one_share,
+    )
     buys = _alloc_buys(
         s_names,
         strategies,
@@ -301,6 +320,10 @@ def _alloc_buys(
     tot = sum(a["dollar_target"] for a in out)
     if tot > avail and tot > 0:
         r = avail / tot
+        # Ratio only (no dollars) -> safe at WARNING; flags an over-budget plan.
+        _log.warning(
+            "alloc_buys: buy targets exceed available funds — scaling by %.4f", r
+        )
         for a in out:
             a["dollar_target"] *= r
 

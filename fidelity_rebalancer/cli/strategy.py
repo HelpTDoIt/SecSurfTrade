@@ -35,6 +35,7 @@ from adapters.yfinance_fallback import (
     adv_to_vol5min,
     watchlist_row_to_quote,
 )
+from engine import observability
 from engine.chunker import _DAILY_SIGMA_BPS, build_chunks_pov, vol_profile_multiplier
 from engine.decision_context import DecisionContext
 from engine.spread_context import spread_context_for
@@ -467,10 +468,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.verbose:
-        logging.basicConfig(
-            level=logging.DEBUG, format="%(message)s", stream=sys.stderr
-        )
+    # Engine observability: always-on file log (INFO; DEBUG + console with -v)
+    # plus a structured per-ticker decision trail.  Both land in the gitignored
+    # logs/ dir.  --verbose unchanged in spirit: it still gates the sensitive
+    # per-trade detail (now to logs/strategy.log + stderr instead of stderr only).
+    log_dir = _ROOT / "logs"
+    strategy_log = observability.setup_logging(
+        log_dir, verbose=args.verbose, filename="strategy.log"
+    )
+    decisions_path = observability.enable_decision_log(log_dir / "decisions.jsonl")
+    _log.info("strategy run: source=%s verbose=%s", args.source, args.verbose)
+    print(f"Engine log -> {strategy_log}  |  decision trail -> {decisions_path}")
 
     state = load_state(resolve_path(args.state))
 

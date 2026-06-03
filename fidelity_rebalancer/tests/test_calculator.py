@@ -339,9 +339,18 @@ def test_alloc_buys_no_trade_no_cash_returns_empty():
 
 
 def test_no_io_in_engine():
-    """Verify engine modules contain no file/network/print I/O."""
+    """Verify engine modules contain no file/network/print I/O.
+
+    ``observability.py`` is the one sanctioned exception: it is the engine's
+    neutral logging seam — the single place file I/O is allowed to live, and it
+    stays inert until a caller opts in via ``enable_decision_log``.  Every other
+    engine module must remain pure (no open/requests/print), so the compute path
+    is side-effect-free by default.
+    """
     engine_dir = Path(__file__).parent.parent / "engine"
     for py_file in engine_dir.glob("*.py"):
+        if py_file.name == "observability.py":
+            continue
         src = py_file.read_text(encoding="utf-8")
         assert "open(" not in src, f"{py_file.name} contains open()"
         assert "requests" not in src, f"{py_file.name} imports requests"

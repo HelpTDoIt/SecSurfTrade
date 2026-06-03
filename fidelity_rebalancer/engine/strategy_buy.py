@@ -18,16 +18,20 @@ rounded so the total cost across all chunks ≤ budget.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
 from adapters import Level2Snapshot, QuoteSnapshot
+from engine import observability
 from engine.chunker import build_buy_chunks, round_to_tick, tick
 from engine.decision_context import DecisionContext
 from engine.spread_context import SpreadContext
 from engine.strategy_sell import get_adv  # cached per-symbol; reuse
 from state.schema import BuyAllocationRecord, BuyStrategy, ChunkRecord
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -268,6 +272,40 @@ def generate_buy_strategy(
             limit_price=cd["limit_price"],
             cost=cd["cost"],
         ))
+
+    # Data-quality WARNINGs (ticker is allowed at WARNING; share counts are not).
+    if adv is None:
+        _log.warning("buy %s: ADV unavailable — sizing from book depth only", buy.ticker)
+    if not (quote.ask or quote.bid):
+        _log.warning("buy %s: no live bid/ask — limit derived from fallback price", buy.ticker)
+    # rule/urgency/limit_price below are post-escalation (the entered values).
+    _log.debug(
+        "buy %s: rule=%s urgency=%s limit=$%.4f chunks=%d "
+        "[spread=%.1fbps rel_vol=%s pct_adv=%s]",
+        buy.ticker, rule, urgency, limit_price, len(chunks),
+        feats.spread_bps,
+        f"{feats.rel_vol:.2f}" if feats.rel_vol is not None else "n/a",
+        f"{feats.pct_of_adv:.2f}" if feats.pct_of_adv is not None else "n/a",
+    )
+    observability.record("strategy_decision", {
+        "side": "buy",
+        "account": buy.account,
+        "strategy": buy.strategy,
+        "ticker": buy.ticker,
+        "share_target": buy.share_target,
+        "rule": rule,
+        "urgency": urgency,
+        "limit_price": limit_price,
+        "n_chunks": len(chunks),
+        "adv": adv,
+        "features": {
+            "spread_bps": round(feats.spread_bps, 3),
+            "midpoint": feats.midpoint,
+            "rel_vol": feats.rel_vol,
+            "pct_of_adv": feats.pct_of_adv,
+            "vwap": feats.vwap,
+        },
+    })
 
     strategy = BuyStrategy(
         account=buy.account,

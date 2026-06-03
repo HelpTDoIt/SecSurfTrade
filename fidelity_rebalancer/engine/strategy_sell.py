@@ -19,12 +19,14 @@ Rules (in priority order):
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
 from typing import Optional
 
 from adapters import Level2Snapshot, QuoteSnapshot
+from engine import observability
 from engine.chunker import (
     adjust_prev_close_for_exdiv,
     build_gap_capture_chunks,
@@ -35,6 +37,8 @@ from engine.chunker import (
 from engine.decision_context import DecisionContext
 from engine.spread_context import SpreadContext
 from state.schema import ChunkRecord, SellRecord, SellStrategy
+
+_log = logging.getLogger(__name__)
 
 
 # ── ADV helper (cached per-symbol per-session) ────────────────────────────
@@ -301,6 +305,43 @@ def generate_sell_strategy(
             limit_price=cd["limit_price"],
             cost=cd["cost"],
         ))
+
+    # Data-quality WARNINGs (ticker is allowed at WARNING; share counts are not).
+    if adv is None:
+        _log.warning("sell %s: ADV unavailable — sizing from book depth only", sell.ticker)
+    if not (quote.bid or quote.ask):
+        _log.warning("sell %s: no live bid/ask — limit derived from fallback price", sell.ticker)
+    # Per-ticker decision detail -> DEBUG (verbose-gated) + structured record.
+    _log.debug(
+        "sell %s: rule=%s urgency=%s limit=$%.4f chunks=%d "
+        "[spread=%.1fbps rel_vol=%s pct_adv=%s day=%s]",
+        sell.ticker, rule, urgency, limit_price, len(chunks),
+        feats.spread_bps,
+        f"{feats.rel_vol:.2f}" if feats.rel_vol is not None else "n/a",
+        f"{feats.pct_of_adv:.2f}" if feats.pct_of_adv is not None else "n/a",
+        f"{feats.day_change_pct:.2f}" if feats.day_change_pct is not None else "n/a",
+    )
+    observability.record("strategy_decision", {
+        "side": "sell",
+        "account": sell.account,
+        "strategy": sell.strategy,
+        "ticker": sell.ticker,
+        "shares": sell.shares,
+        "rule": rule,
+        "urgency": urgency,
+        "limit_price": limit_price,
+        "n_chunks": len(chunks),
+        "adv": adv,
+        "features": {
+            "spread_bps": round(feats.spread_bps, 3),
+            "midpoint": feats.midpoint,
+            "rel_vol": feats.rel_vol,
+            "pct_of_adv": feats.pct_of_adv,
+            "day_change_pct": feats.day_change_pct,
+            "adj_prev_close": feats.adj_prev_close,
+            "vwap": feats.vwap,
+        },
+    })
 
     strategy = SellStrategy(
         account=sell.account,
