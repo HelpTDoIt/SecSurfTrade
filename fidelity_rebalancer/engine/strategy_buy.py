@@ -24,6 +24,7 @@ from typing import Optional
 
 from adapters import Level2Snapshot, QuoteSnapshot
 from engine.chunker import build_buy_chunks, round_to_tick, tick
+from engine.decision_context import DecisionContext
 from engine.spread_context import SpreadContext
 from engine.strategy_sell import get_adv  # cached per-symbol; reuse
 from state.schema import BuyAllocationRecord, BuyStrategy, ChunkRecord
@@ -227,22 +228,41 @@ def generate_buy_strategy(
     vol5min: float,
     *,
     today: Optional[date] = None,
-    adv: Optional[float] = None,
     max_pct_of_top3_depth: float = 0.25,
     max_pct_of_5min_volume: float = 0.15,
+    ctx: Optional[DecisionContext] = None,
+    # Legacy flat kwargs kept for backwards compat; ignored when ctx is supplied
+    adv: Optional[float] = None,
     spread_ctx: Optional[SpreadContext] = None,
     vwap: Optional[float] = None,
     market_minutes: Optional[int] = None,
 ) -> tuple[BuyStrategy, list[ChunkRecord]]:
-    """Generate a buy strategy + chunk records for one buy allocation."""
-    if adv is None:
-        adv = get_adv(buy.ticker)
+    """Generate a buy strategy + chunk records for one buy allocation.
 
-    feats = _features(buy, quote, adv, vwap=vwap)
-    rule, urgency, limit_price, reasoning, depth_override = _decide(feats, buy, quote, spread_ctx)
+    Preferred call: pass ``ctx=DecisionContext(...)`` bundling the four market
+    inputs.  The legacy flat kwargs (adv, spread_ctx, vwap, market_minutes) are
+    still accepted for backward-compatibility and are used when ctx is None.
+    """
+    # Resolve inputs from ctx or legacy flat kwargs
+    if ctx is not None:
+        _adv            = ctx.adv
+        _spread_ctx     = ctx.spread_ctx
+        _vwap           = ctx.vwap
+        _market_minutes = ctx.market_minutes
+    else:
+        _adv            = adv
+        _spread_ctx     = spread_ctx
+        _vwap           = vwap
+        _market_minutes = market_minutes
+
+    if _adv is None:
+        _adv = get_adv(buy.ticker)
+
+    feats = _features(buy, quote, _adv, vwap=_vwap)
+    rule, urgency, limit_price, reasoning, depth_override = _decide(feats, buy, quote, _spread_ctx)
 
     urgency, limit_price, reasoning = _escalate_buy(
-        urgency, limit_price, reasoning, quote, feats.px_tick, market_minutes,
+        urgency, limit_price, reasoning, quote, feats.px_tick, _market_minutes,
     )
 
     # Use the strategy-chosen limit_price to size the budget.

@@ -32,6 +32,7 @@ from engine.chunker import (
     round_to_tick,
     tick,
 )
+from engine.decision_context import DecisionContext
 from engine.spread_context import SpreadContext
 from state.schema import ChunkRecord, SellRecord, SellStrategy
 
@@ -250,10 +251,12 @@ def generate_sell_strategy(
     vol5min: float,
     *,
     today: Optional[date] = None,
-    adv: Optional[float] = None,
     exdiv_calendar: Optional[dict] = None,
     max_pct_of_top3_depth: float = 0.25,
     max_pct_of_5min_volume: float = 0.15,
+    ctx: Optional[DecisionContext] = None,
+    # Legacy flat kwargs kept for backwards compat; ignored when ctx is supplied
+    adv: Optional[float] = None,
     spread_ctx: Optional[SpreadContext] = None,
     vwap: Optional[float] = None,
     market_minutes: Optional[int] = None,
@@ -261,14 +264,31 @@ def generate_sell_strategy(
     """
     Generate a sell strategy + matching chunk records for a single SellRecord.
     Returns (strategy, chunk_records).
+
+    Preferred call: pass ``ctx=DecisionContext(...)`` bundling the four market
+    inputs.  The legacy flat kwargs (adv, spread_ctx, vwap, market_minutes) are
+    still accepted for backward-compatibility and are used when ctx is None.
     """
     today = today or date.today()
-    if adv is None:
-        adv = get_adv(sell.ticker)
 
-    feats = _features(sell, quote, today, adv, exdiv_calendar, vwap=vwap)
+    # Resolve inputs from ctx or legacy flat kwargs
+    if ctx is not None:
+        _adv           = ctx.adv
+        _spread_ctx    = ctx.spread_ctx
+        _vwap          = ctx.vwap
+        _market_minutes = ctx.market_minutes
+    else:
+        _adv           = adv
+        _spread_ctx    = spread_ctx
+        _vwap          = vwap
+        _market_minutes = market_minutes
+
+    if _adv is None:
+        _adv = get_adv(sell.ticker)
+
+    feats = _features(sell, quote, today, _adv, exdiv_calendar, vwap=_vwap)
     rule, urgency, limit_price, reasoning = _decide(
-        feats, sell, quote, spread_ctx, market_minutes=market_minutes,
+        feats, sell, quote, _spread_ctx, market_minutes=_market_minutes,
     )
 
     if rule == "gap_capture":

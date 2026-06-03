@@ -36,6 +36,7 @@ from adapters.yfinance_fallback import (
     watchlist_row_to_quote,
 )
 from engine.chunker import _DAILY_SIGMA_BPS, build_chunks_pov, vol_profile_multiplier
+from engine.decision_context import DecisionContext
 from engine.spread_context import spread_context_for
 from engine.strategy_buy import generate_buy_strategy
 from engine.strategy_sell import generate_sell_strategy
@@ -640,10 +641,12 @@ def main() -> None:
             quote,
             l2,
             vol5min=vol5min,
-            adv=adv_val,
-            spread_ctx=sc,
-            vwap=vwap_val,
-            market_minutes=mkt_minutes,
+            ctx=DecisionContext(
+                market_minutes=mkt_minutes,
+                spread_ctx=sc,
+                vwap=vwap_val,
+                adv=adv_val,
+            ),
         )
         if not l2.bids:
             chunks, pov_info = _rechunk_sell_pov(
@@ -722,10 +725,12 @@ def main() -> None:
             quote,
             l2,
             vol5min=vol5min,
-            adv=adv_val,
-            spread_ctx=sc,
-            vwap=vwap_val,
-            market_minutes=mkt_minutes,
+            ctx=DecisionContext(
+                market_minutes=mkt_minutes,
+                spread_ctx=sc,
+                vwap=vwap_val,
+                adv=adv_val,
+            ),
         )
         if not l2.asks:
             chunks, pov_info = _rechunk_buy_pov(
