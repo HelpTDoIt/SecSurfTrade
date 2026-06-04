@@ -1,6 +1,6 @@
 # 09 — Consolidated Roadmap
 
-**Status as of 2026-06-02.** Single source of truth for outstanding features,
+**Status as of 2026-06-04.** Single source of truth for outstanding features,
 changes, design requirements, and roadmap items across the `fidelity_rebalancer`
 project. Supersedes the scattered backlog in `07_backlog.md` for prioritization
 purposes; `08_execution_scheduler.md` remains the detailed design for section A.
@@ -23,6 +23,15 @@ are never committed.
     to `proceeds + cash` regardless of margin, so margin accounts can still
     under-buy vs. true buying power. Loosening needs a buying-power number
     (declined for now — "suppress warning, no number").
+- **C-1 localStorage restore fix** — committed `46912d2` on `develop`.
+  Restore-session banner ("💾 Session restored from <time>") + new-day
+  auto-discard (stale prior-day state purged on mount). Scope complete — no
+  follow-up.
+- **D-1 OCR fill auto-logging (base)** — committed `d1b5b26` on `develop`. The
+  monitor auto-captures fill deltas from the ATP Orders OCR read into
+  `logs/journal.jsonl` (per-order delta tracking, first-seen handling; verified
+  in `test_monitor_fills.py`). **Follow-up = Phase -1:** push those fills into
+  the calculator's order rows, replacing manual "+ Fill" entry (see D. below).
 
 ---
 
@@ -109,10 +118,10 @@ and A-2..A-6 land as engine steps, not as `engine/scheduler.py`.
 
 ## C. UI / UX / Performance
 
-- **C-1** — **localStorage silent-restore fix** _(next-window priority #1)_.
-  Calculator restores a prior session on reload with no banner; can resurrect a
-  stale/prior-day session. Add a "Restored session from <time>" banner +
-  auto-discard on a new calendar day.
+- **C-1** — ✅ **Shipped** (`46912d2`, develop). localStorage silent-restore fix:
+  restore-session banner ("💾 Session restored from <time>") + new-day
+  auto-discard (stale prior-day state purged on mount). Scope complete — no
+  follow-up.
 - **C-2 .. C-9** — Smaller UI/UX/perf polish items (carried from 07 backlog).
 - **C-10** — Real-time Allocation Drift Visualizer. Render a side-by-side terminal column/gauge showing target vs. current vs. projected weights to let the trader audit allocation changes before committing.
 - **C-11** — Interactive Override Diff. Highlight manual price/size overrides in a distinct color and display the deviation (e.g., `+$0.04 above recommended midpoint`) in the presenter screen.
@@ -123,8 +132,15 @@ and A-2..A-6 land as engine steps, not as `engine/scheduler.py`.
 
 ## D. Manual-step reducers
 
-- **D-1** — **OCR fill auto-logging** _(next-window priority #2)_. Auto-capture
-  fills from the ATP Orders OCR read into the journal instead of manual entry.
+- **D-1** — **OCR fill auto-logging.** _Base shipped_ (`d1b5b26`, develop): the
+  monitor auto-captures fill deltas from the ATP Orders OCR read into
+  `logs/journal.jsonl` (per-order delta tracking, first-seen handling).
+  **Follow-up (Phase -1, next round):** pipe those captured fills straight into
+  the calculator's order rows. A new CLI (`cli/export_fills.py`) reads
+  `journal.jsonl` and emits a fills JSON; the calculator gains an **Import fills**
+  action that maps each fill (qty=`delta`, price=`limit_price`) onto its matching
+  order, replacing manual "+ Fill" typing. File-based / read-only — **not** the
+  WebSocket bridge (that stays B-15); recompute stays F-1.
 - **D-2 .. D-6** — Other manual-step reducers (carried from 07 backlog).
 
 ---
@@ -223,9 +239,12 @@ Total Score = Sum of all category scores (Max: 25.0, Min: 5.0).
 
 | Committed Group | Rank | Item ID | Title / Description | Diff | UI | Eff | Perf | Maint | Total Score |
 |:---|---|---|---|---|---|---|---|---|---|
-| **Phase 0** *(Quick Wins)* | 1 | **D-1** | **OCR fill auto-logging** (in [monitor.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/tui/monitor.py)) | 2.5 | 5.0 | 5.0 | 5.0 | 2.5 | **20.0** |
-| | 2 | **LT-1** | **Live-test the monitor** (Mock vs Live ATP smoke) | 5.0 | 1.0 | 2.5 | 5.0 | 5.0 | **18.5** |
-| | 3 | **C-1** | **localStorage silent-restore fix** (React calc banner) | 5.0 | 2.5 | 2.5 | 5.0 | 2.5 | **17.5** |
+| **Phase -1** *(Parallel Batch — next round)* | 1 | **D-1** | **Fills → calculator import bridge** (journal.jsonl → fills JSON → calc "Import fills"; base auto-log shipped `d1b5b26`) | 2.5 | 5.0 | 5.0 | 5.0 | 2.5 | **20.0** |
+| | 2 | **B-9** | **Adapters `print()` → stdlib logging** (atp_ocr / atp_watchlist / yfinance_fallback) | 5.0 | 1.0 | 2.5 | 2.5 | 5.0 | **16.0** |
+| | 3 | **B-11** | **TUI logging consolidation** (monitor.py reuses observability.setup_logging) | 5.0 | 1.0 | 1.0 | 1.0 | 5.0 | **13.0** |
+| | 4 | **B-14** | **Uniform path handling** (`Path.resolve()` across adapters/CLIs/TUIs) | 5.0 | 1.0 | 1.0 | 1.0 | 5.0 | **13.0** |
+| **Phase 0** *(Quick Wins)* | 1 | **LT-1** | **Live-test the monitor** (Mock vs Live ATP smoke) | 5.0 | 1.0 | 2.5 | 5.0 | 5.0 | **18.5** |
+| | — | ~~**C-1**~~ | ✅ Shipped `46912d2` — restore-session banner + new-day auto-discard | 5.0 | 2.5 | 2.5 | 5.0 | 2.5 | **17.5** |
 | **Phase 1** *(Engine Foundation)*| 1 | **LT-2** | **Live-test the strategy engine** (baseline rules validation) | 5.0 | 1.0 | 5.0 | 5.0 | 5.0 | **21.0** |
 | **Phase 2 / Wave 2** *(Behavior)*| 1 | **G-4 / Step 3** | **Symmetric Sell Escalation** (in [strategy_sell.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/engine/strategy_sell.py)) | 5.0 | 2.5 | 5.0 | 5.0 | 5.0 | **22.5** |
 | | 2 | **F-2 / Step 6** | **`[C]` re-quote action does not persist** (stall re-pricing) | 2.5 | 5.0 | 5.0 | 5.0 | 2.5 | **20.0** |
@@ -240,15 +259,15 @@ Total Score = Sum of all category scores (Max: 25.0, Min: 5.0).
 | | 6 | **C-12** | **Asynchronous OCR Workers** (Non-blocking Textual UI) | 2.5 | 5.0 | 5.0 | 2.5 | 2.5 | **17.5** |
 | | 7 | **F-3** | **Decide monitor source of truth (ATP OCR vs plan)** | 2.5 | 2.5 | 2.5 | 5.0 | 5.0 | **17.5** |
 | | 8 | **B-8** | **`_find_downloads_csvs` auto-detect fix** (column index) | 5.0 | 1.0 | 5.0 | 2.5 | 2.5 | **16.0** |
-| | 9 | **B-9** | **Adapters direct printing & logging inconsistency** | 5.0 | 1.0 | 2.5 | 2.5 | 5.0 | **16.0** |
-| | 10 | **B-4** | **Consolidate "next steps" guidance across CLIs** | 5.0 | 2.5 | 1.0 | 2.5 | 5.0 | **16.0** |
-| | 11 | **F-4** | **ATPOrdersAdapter fragile row access** (Telerik grid fixes) | 1.0 | 2.5 | 5.0 | 5.0 | 2.5 | **16.0** |
-| | 12 | **B-13** | **Configurable CSV Column Header Map** | 5.0 | 1.0 | 1.0 | 2.5 | 5.0 | **14.5** |
-| | 13 | **B-10** | **Preflight interactive prompts & log boundaries** | 2.5 | 2.5 | 1.0 | 2.5 | 5.0 | **13.5** |
-| | 14 | **B-11** | **TUI duplicate logging setup** (monitor cleanup) | 5.0 | 1.0 | 1.0 | 1.0 | 5.0 | **13.0** |
-| | 15 | **B-14** | **Uniform path handling** (`Path.resolve()` standard) | 5.0 | 1.0 | 1.0 | 1.0 | 5.0 | **13.0** |
-| | 16 | **C-13** | **Localized Region Caching** (OCR crop optimization) | 2.5 | 1.0 | 5.0 | 1.0 | 2.5 | **12.0** |
-| | 17 | **B-7** | **Margin buying-power number** (ATP parsing addition) | 1.0 | 2.5 | 1.0 | 5.0 | 2.5 | **12.0** |
+| | 9 | **B-4** | **Consolidate "next steps" guidance across CLIs** | 5.0 | 2.5 | 1.0 | 2.5 | 5.0 | **16.0** |
+| | 10 | **F-4** | **ATPOrdersAdapter fragile row access** (Telerik grid fixes) | 1.0 | 2.5 | 5.0 | 5.0 | 2.5 | **16.0** |
+| | 11 | **B-13** | **Configurable CSV Column Header Map** | 5.0 | 1.0 | 1.0 | 2.5 | 5.0 | **14.5** |
+| | 12 | **B-10** | **Preflight interactive prompts & log boundaries** | 2.5 | 2.5 | 1.0 | 2.5 | 5.0 | **13.5** |
+| | 13 | **C-13** | **Localized Region Caching** (OCR crop optimization) | 2.5 | 1.0 | 5.0 | 1.0 | 2.5 | **12.0** |
+| | 14 | **B-7** | **Margin buying-power number** (ATP parsing addition) | 1.0 | 2.5 | 1.0 | 5.0 | 2.5 | **12.0** |
+
+> **B-9, B-11, B-14 promoted from this backlog into Phase -1** (2026-06-04) — see
+> the parallel-batch plan in Sequencing below.
 
 ---
 
@@ -261,34 +280,78 @@ Two tracks run loosely in parallel: **Track A** keeps the daily workflow sharp
 arc (`10_strategy_engine.md` §6) plus the monitor recompute. They barely
 compete — A is front-end/ops, B is the engine.
 
-**Phase 0 — quick independent wins (next window)**
+**Phase -1 — parallel refactor + fill-bridge batch (next round, agent-executed)**
 
-1. **C-1** localStorage restore banner / new-day auto-discard _(owner priority #1)_.
-2. **D-1** OCR fill auto-logging _(owner priority #2)_.
-3. **Engine step 2 — surface reasoning (B-2/G-1), pulled forward.** Cheapest
-   trust win: today the engine explains _why_ it picked each limit but routes it
-   to DEBUG. Showing it in TUI/TXT is near-zero risk and makes the engine
-   auditable _before_ we change its behavior. Recommended to jump the queue.
-4. **LT-1** read-only live ATP smoke (mock half already done).
+The next dev round runs as one batch of parallel agents — **Sonnet workers,
+Opus reconcile/review** — sequencing the file overlaps so no two agents edit the
+same file at once. Of the five requested IDs, **C-1** (`46912d2`) and the
+**D-1 base** (`d1b5b26`) already shipped; the executable batch is **D-1
+follow-up + B-9 + B-11 + B-14**.
 
-**Phase 1 — engine foundation** 5. **LT-2** live-test the engine (`--source atp` and `--source yfinance`) to
-refresh ground truth — a gate before any refactor. 6. **Engine step 1 — `DecisionContext` refactor.** Keystone; unifies the
-scattered timing/funding/liquidity inputs. Pure refactor, no behavior change. 7. **F-1** `optimizer.recompute_buys` — monitor correctness; independent, can
+- **Wave 1 — three parallel Sonnet agents (disjoint files):**
+  - **A · D-1 fill-bridge.** New `cli/export_fills.py` reads `logs/journal.jsonl`,
+    aggregates `fill` events per order (symbol+side), and emits a
+    calculator-importable fills JSON; add an **Import fills** action in
+    `rebalance_calculator.html` (reuse the `applyImportedState` path) that maps
+    each fill — qty=`delta`, price=`limit_price` — onto its matching order row.
+    *Files:* new `cli/export_fills.py`, `rebalance_calculator.html`.
+    *Key risk:* the journal payload carries `order_id`/`symbol`/`side` but **no
+    account**, while calculator orders are keyed by account+strategy+symbol —
+    resolve attribution (carry the account in the read if the OCR exposes it, else
+    symbol+side match with single-order auto-apply and a manual-pick fallback when
+    a symbol spans accounts).
+  - **B · B-9 adapter logging.** Replace raw `print()` under the global `_DEBUG`
+    flag in `atp_ocr.py`, `atp_watchlist.py`, `yfinance_fallback.py` with
+    `logging.getLogger(__name__)` routed to `logs/strategy.log`.
+    *Files:* the three adapters only.
+  - **C · B-11 TUI logging.** Delete monitor.py's duplicate `_setup_logging`;
+    reuse `engine/observability.setup_logging(log_dir, verbose=…, filename="monitor.log")`.
+    *Files:* `tui/monitor.py` (imports `engine/observability.py`, does not edit it).
+- **Wave 2 — one Sonnet agent (after Wave 1 lands):**
+  - **D · B-14 uniform paths.** Standardize on absolute resolved `Path` objects
+    across adapters / CLIs / TUIs. Runs *after* Wave 1 because it re-touches the
+    adapters (B-9's files) and `monitor.py` (B-11's file); this Wave-1 → Wave-2
+    split is the "sequence the overlaps" choice — it builds on the finalized
+    Wave-1 diffs instead of racing them.
+- **Wave 3 — Opus reconcile + verify:** review all four diffs together; run the
+  full suite from `fidelity_rebalancer/` (`$env:PYTHONPATH='.'; python -m pytest`)
+  — all tests + the `test_no_io_in_engine` purity gate must stay green; confirm no
+  raw `print()` remains, no duplicate logging handlers, paths are uniformly
+  resolved, and the fills import round-trips onto the right orders.
+
+*Why Sonnet + sequenced (not git worktrees):* all four items are low-difficulty
+(Diff = 5.0, D-1 = 2.5) mechanical / IO changes; the only coordination cost is
+the adapters + monitor.py overlap, handled cheaply by the Wave-1 → Wave-2 split
+rather than worktree merges. Opus is reserved for the cross-cutting review where
+any integration bug would surface.
+
+**Phase 0 — quick independent wins (after Phase -1)**
+
+1. **Engine step 2 — surface reasoning (B-2/G-1).** Cheapest trust win: today the
+   engine explains _why_ it picked each limit but routes it to DEBUG. Showing it
+   in TUI/TXT is near-zero risk and makes the engine auditable _before_ we change
+   its behavior.
+2. **LT-1** read-only live ATP smoke (mock half already done); capture the
+   `logs/journal.jsonl` event trail as evidence.
+
+**Phase 1 — engine foundation** 3. **LT-2** live-test the engine (`--source atp` and `--source yfinance`) to
+refresh ground truth — a gate before any refactor. 4. **Engine step 1 — `DecisionContext` refactor.** Keystone; unifies the
+scattered timing/funding/liquidity inputs. Pure refactor, no behavior change. 5. **F-1** `optimizer.recompute_buys` — monitor correctness; independent, can
 run in parallel with the refactor.
 
-**Phase 2 — engine behavior** 8. Step 3 symmetric sell escalation (G-4) · Step 4 per-class %ADV thresholds
+**Phase 2 — engine behavior** 6. Step 3 symmetric sell escalation (G-4) · Step 4 per-class %ADV thresholds
 (G-5) · Step 6 / F-6 re-quote via the rules · fold in G-6 (unify the two ADV
 definitions).
 
-**Phase 3 — absorb the scheduler (section A)** 9. Answer the six chunk-8 design decisions **as `DecisionContext` inputs**, then
+**Phase 3 — absorb the scheduler (section A)** 7. Answer the six chunk-8 design decisions **as `DecisionContext` inputs**, then
 step 7: add `phase`/`earliest_entry`/`funded_by` to `ChunkRecord`, emit phased
 chunks from the engine, retire the standalone scheduler stage. (F-5 follows.)
 
 **Phase 4 — UI/UX Polish & OCR Process Isolation (Performance and Reliability)**
-10. **C-11** Interactive Override Diff (score: 20.0). High-contrast highlighting of price/size deviations in [presenter.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/tui/presenter.py).
-11. **B-12** Global win32/pywinauto crash boundary in TUI (score: 20.0). Prevents terminal corruption on Win32 errors in [app.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/tui/app.py).
-12. **C-12** Asynchronous OCR Workers (score: 17.5). Offload RapidOCR to a background process/thread in [atp_ocr.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/adapters/atp_ocr.py) to prevent TUI freezing.
-13. **B-15** Shared Memory/WebSocket State Sync (score: 20.0). Eliminates manual export/import loop between browser and TUI.
+8. **C-11** Interactive Override Diff (score: 20.0). High-contrast highlighting of price/size deviations in [presenter.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/tui/presenter.py).
+9. **B-12** Global win32/pywinauto crash boundary in TUI (score: 20.0). Prevents terminal corruption on Win32 errors in [app.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/tui/app.py).
+10. **C-12** Asynchronous OCR Workers (score: 17.5). Offload RapidOCR to a background process/thread in [atp_ocr.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/adapters/atp_ocr.py) to prevent TUI freezing.
+11. **B-15** Shared Memory/WebSocket State Sync (score: 20.0). Eliminates manual export/import loop between browser and TUI.
 
 **Deferred:** T-1 tax-awareness, B-7 margin buying-power number, B-8 CSV
 auto-detect, E-\* Phase B+.
