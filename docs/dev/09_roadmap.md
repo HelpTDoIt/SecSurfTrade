@@ -26,6 +26,30 @@ are never committed.
 
 ---
 
+## Foundation (shipped)
+
+The original build — six chunk prompts in `docs/dev/01..06` — is complete and is
+the engine's load-bearing base. Captured here so `00_ARCHITECTURE.md` can stay
+purely descriptive (it no longer tracks build status, the old "development
+chunks" table, "definition of done", or "current status").
+
+- **Engine + state + parity (chunks 1–2).** React calculator ported to a pure
+  Python engine (`engine/calculator.py`), the canonical state JSON
+  (`state/schema.py`), and the `compute` + `compare` CLIs. **Parity gate met:**
+  `cli.compute` produces byte-identical `computed` output to the React calc on
+  the regression fixture, so the engine is the source of truth (the calc stays a
+  spot-check; the React **Import/Export State** buttons round-trip the state JSON).
+- **Read adapters + strategy + TUI + monitor (chunks 3–6).** ATP read-only
+  adapters (UIA where it works, OCR/vision fallback for the Telerik-MAUI Level II
+  and Orders panels), the sell/buy strategy generators + chunkers, the Textual
+  approval presenter, and the live order monitor (~45 s polling, stall detection,
+  re-quote).
+- **Daily-workflow tooling (added on top, all read-only).** **Morning preflight**
+  (`cli.preflight` + `preflight/`), **buy progress tracker** (`cli.progress`),
+  and **EOD trade-journal report** (`cli.eod_report`, scoped to today).
+
+---
+
 ## A. Execution Scheduler (chunk 8)
 
 Detailed design: `08_execution_scheduler.md`. Phased order release across the
@@ -71,6 +95,15 @@ and A-2..A-6 land as engine steps, not as `engine/scheduler.py`.
   `Get-CsvAccountName` and `engine/calculator.py:consolidate`) or drop the
   auto-detect and require `--inputs`. Discovered while verifying the Pending
   activity fix (commit `09fa4eb`, 2026-06-02).
+- **B-9** — Adapters direct printing & logging inconsistency (2b-c). Adapters (`atp_ocr.py`, `atp_watchlist.py`, `yfinance_fallback.py`) print warnings and debug details directly to `stdout`/`stderr` using raw `print()` statements under a global `_DEBUG` flag, bypassing stdlib logging. Move to standard `logging.getLogger(__name__)` and route to `logs/strategy.log`.
+- **B-10** — Preflight interactive prompts & logging boundaries (4b-c). Preflight orchestrator (`orchestrator.py`) handles interactive console prompts, whereas core checks return structured results. Preflight modules do not use standard logging, delegating output formatting to calling CLIs. Align preflight logging boundaries.
+- **B-11** — TUI duplicate logging setup (5b-c). `monitor.py` implements its own duplicate `_setup_logging` function writing to `logs/monitor.log` instead of reusing the unified configuration setup in `engine/observability.py`. Consolidate logging setup to avoid duplicate handler setups.
+- **B-12** — Global win32/pywinauto crash boundary in TUI. If screen capture or Win32 API interactions throw unexpected errors inside the monitor poller thread (e.g. if the user closes/minimizes ATP during a scan), the Textual app can crash, occasionally locking or corrupting terminal states. Implement a global crash-boundary wrapper inside the Textual application that safely restores terminal modes and cleanly presents target tracebacks.
+- **B-13** — Configurable CSV Column Header Map. The parser strictly hardcodes required Fidelity CSV columns (e.g. "Symbol", "Quantity", "Current Value"). If Fidelity changes their export headers, the engine fails silently or throws. Move the parsed header keys into inputs.config inside EngineConfig so they can be re-mapped without modifying engine code.
+- **B-14** — Uniform path handling. The project uses a mix of standard Path operators and custom path cleaners (like cli.resolve_path). Standardize on absolute resolved Path objects across all adapters, CLIs, and TUIs to prevent POSIX vs. Windows directory separator mismatch edge cases.
+- **B-15** — Shared Memory/WebSocket State Sync (React Calculator Bridge). Run a minimal local WebSocket server inside `server.py` to sync state JSON changes bidirectionally between the React web UI and the Python TUI engine, eliminating manual file imports.
+
+
 
 ---
 
@@ -81,6 +114,10 @@ and A-2..A-6 land as engine steps, not as `engine/scheduler.py`.
   stale/prior-day session. Add a "Restored session from <time>" banner +
   auto-discard on a new calendar day.
 - **C-2 .. C-9** — Smaller UI/UX/perf polish items (carried from 07 backlog).
+- **C-10** — Real-time Allocation Drift Visualizer. Render a side-by-side terminal column/gauge showing target vs. current vs. projected weights to let the trader audit allocation changes before committing.
+- **C-11** — Interactive Override Diff. Highlight manual price/size overrides in a distinct color and display the deviation (e.g., `+$0.04 above recommended midpoint`) in the presenter screen.
+- **C-12** — Asynchronous OCR Workers (Non-blocking UI). Offload RapidOCR window captures and model inference in [atp_ocr.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/adapters/atp_ocr.py) to a background thread/process pool to prevent Textual UI freezes during polls.
+- **C-13** — Localized Region Caching. Cache the relative coordinate offsets of L2 grid panels in `atp_ocr.py` after the first successful lookup; crop subsequent frames directly using cached coordinates to avoid CPU quadrant scans.
 
 ---
 
@@ -93,6 +130,15 @@ and A-2..A-6 land as engine steps, not as `engine/scheduler.py`.
 ---
 
 ## E. Future / Phase B+
+
+**Execution-backend phasing (architecture vision).** The same engine and monitor
+keep running unchanged; only the *execution adapter* swaps:
+`manual entry (today)` → **Phase B** (ATP pre-fill, human clicks Preview +
+Submit) → **Phase C** (ATP full automation + kill switch). Engine code does not
+change between phases — the pluggable adapter interface is the only thing that
+changes. When any write-side automation lands, cap order entry at **< 2
+orders/min** to stay under Fidelity abuse-detection. (Absorbed from
+`00_ARCHITECTURE.md`, which now points here for the forward-looking view.)
 
 - **E-1 .. E-7** — Auto-cancellation, auto-re-placement, account-level kill
   switch, multi-account tabbed display, etc. Explicitly out of scope for the
@@ -162,7 +208,53 @@ above/below VWAP, default) and buy rules.
 
 ---
 
+## Prioritization and Scoring Rubric
+
+To systematically prioritize roadmap and backlog tasks, each item is rated in five categories:
+1. **Difficulty to implement** (time, odds of generating bugs, amount of AI budget): `low` = 5.0, `med` = 2.5, `hi` = 1.0.
+2. **UI improvement** (reduction of manual intervention, improving human visibility, reducing friction): `hi` = 5.0, `med` = 2.5, `low` = 1.0.
+3. **Efficiency** (speed, reliability, accuracy): `hi` = 5.0, `med` = 2.5, `low` = 1.0.
+4. **Performance** (improving trading outcomes, reducing human error): `hi` = 5.0, `med` = 2.5, `low` = 1.0.
+5. **Maintenance** (reducing code complexity, improving readability, reducing future errors over time): `hi` = 5.0, `med` = 2.5, `low` = 1.0.
+
+Total Score = Sum of all category scores (Max: 25.0, Min: 5.0).
+
+### Prioritized Backlog Table
+
+| Committed Group | Rank | Item ID | Title / Description | Diff | UI | Eff | Perf | Maint | Total Score |
+|:---|---|---|---|---|---|---|---|---|---|
+| **Phase 0** *(Quick Wins)* | 1 | **D-1** | **OCR fill auto-logging** (in [monitor.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/tui/monitor.py)) | 2.5 | 5.0 | 5.0 | 5.0 | 2.5 | **20.0** |
+| | 2 | **LT-1** | **Live-test the monitor** (Mock vs Live ATP smoke) | 5.0 | 1.0 | 2.5 | 5.0 | 5.0 | **18.5** |
+| | 3 | **C-1** | **localStorage silent-restore fix** (React calc banner) | 5.0 | 2.5 | 2.5 | 5.0 | 2.5 | **17.5** |
+| **Phase 1** *(Engine Foundation)*| 1 | **LT-2** | **Live-test the strategy engine** (baseline rules validation) | 5.0 | 1.0 | 5.0 | 5.0 | 5.0 | **21.0** |
+| **Phase 2 / Wave 2** *(Behavior)*| 1 | **G-4 / Step 3** | **Symmetric Sell Escalation** (in [strategy_sell.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/engine/strategy_sell.py)) | 5.0 | 2.5 | 5.0 | 5.0 | 5.0 | **22.5** |
+| | 2 | **F-2 / Step 6** | **`[C]` re-quote action does not persist** (stall re-pricing) | 2.5 | 5.0 | 5.0 | 5.0 | 2.5 | **20.0** |
+| | 3 | **G-5 / Step 4** | **Per-class %ADV thresholds** (ADV consolidation) | 2.5 | 1.0 | 5.0 | 5.0 | 5.0 | **18.5** |
+| | 4 | **G-3 / Step 8** | **yfinance VWAP approximation** (in [yfinance_fallback.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/adapters/yfinance_fallback.py)) | 2.5 | 1.0 | 5.0 | 2.5 | 2.5 | **13.5** |
+| **Phase 3 / Wave 3** *(Scheduler)* | 1 | **A / S-1 (Step 7)**| **Scheduler Absorption** (Tranche sizing / gates) | 1.0 | 5.0 | 2.5 | 5.0 | 5.0 | **18.5** |
+| **Backlog** *(Uncommitted)* | 1 | **C-11** | **Interactive Override Diff** (in [presenter.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/tui/presenter.py)) | 5.0 | 5.0 | 2.5 | 5.0 | 2.5 | **20.0** |
+| | 2 | **B-12** | **Global win32/pywinauto crash boundary in TUI** | 2.5 | 2.5 | 5.0 | 5.0 | 5.0 | **20.0** |
+| | 3 | **B-15** | **Shared Memory/WebSocket State Sync** (React Bridge) | 2.5 | 5.0 | 5.0 | 5.0 | 2.5 | **20.0** |
+| | 4 | **B-3** | **Calculator imports recommended-orders JSON** | 5.0 | 5.0 | 2.5 | 2.5 | 2.5 | **17.5** |
+| | 5 | **C-10** | **Real-time Allocation Drift Visualizer** (TUI presenter) | 2.5 | 5.0 | 2.5 | 5.0 | 2.5 | **17.5** |
+| | 6 | **C-12** | **Asynchronous OCR Workers** (Non-blocking Textual UI) | 2.5 | 5.0 | 5.0 | 2.5 | 2.5 | **17.5** |
+| | 7 | **F-3** | **Decide monitor source of truth (ATP OCR vs plan)** | 2.5 | 2.5 | 2.5 | 5.0 | 5.0 | **17.5** |
+| | 8 | **B-8** | **`_find_downloads_csvs` auto-detect fix** (column index) | 5.0 | 1.0 | 5.0 | 2.5 | 2.5 | **16.0** |
+| | 9 | **B-9** | **Adapters direct printing & logging inconsistency** | 5.0 | 1.0 | 2.5 | 2.5 | 5.0 | **16.0** |
+| | 10 | **B-4** | **Consolidate "next steps" guidance across CLIs** | 5.0 | 2.5 | 1.0 | 2.5 | 5.0 | **16.0** |
+| | 11 | **F-4** | **ATPOrdersAdapter fragile row access** (Telerik grid fixes) | 1.0 | 2.5 | 5.0 | 5.0 | 2.5 | **16.0** |
+| | 12 | **B-13** | **Configurable CSV Column Header Map** | 5.0 | 1.0 | 1.0 | 2.5 | 5.0 | **14.5** |
+| | 13 | **B-10** | **Preflight interactive prompts & log boundaries** | 2.5 | 2.5 | 1.0 | 2.5 | 5.0 | **13.5** |
+| | 14 | **B-11** | **TUI duplicate logging setup** (monitor cleanup) | 5.0 | 1.0 | 1.0 | 1.0 | 5.0 | **13.0** |
+| | 15 | **B-14** | **Uniform path handling** (`Path.resolve()` standard) | 5.0 | 1.0 | 1.0 | 1.0 | 5.0 | **13.0** |
+| | 16 | **C-13** | **Localized Region Caching** (OCR crop optimization) | 2.5 | 1.0 | 5.0 | 1.0 | 2.5 | **12.0** |
+| | 17 | **B-7** | **Margin buying-power number** (ATP parsing addition) | 1.0 | 2.5 | 1.0 | 5.0 | 2.5 | **12.0** |
+
+---
+
+
 ## Sequencing (phased plan)
+
 
 Two tracks run loosely in parallel: **Track A** keeps the daily workflow sharp
 (UI/UX + manual-step reducers, low-risk, isolated); **Track B** is the engine
@@ -192,6 +284,12 @@ definitions).
 step 7: add `phase`/`earliest_entry`/`funded_by` to `ChunkRecord`, emit phased
 chunks from the engine, retire the standalone scheduler stage. (F-5 follows.)
 
+**Phase 4 — UI/UX Polish & OCR Process Isolation (Performance and Reliability)**
+10. **C-11** Interactive Override Diff (score: 20.0). High-contrast highlighting of price/size deviations in [presenter.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/tui/presenter.py).
+11. **B-12** Global win32/pywinauto crash boundary in TUI (score: 20.0). Prevents terminal corruption on Win32 errors in [app.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/tui/app.py).
+12. **C-12** Asynchronous OCR Workers (score: 17.5). Offload RapidOCR to a background process/thread in [atp_ocr.py](file:///C:/Users/Jason/Documents/Code/SecSurfTrade/fidelity_rebalancer/adapters/atp_ocr.py) to prevent TUI freezing.
+13. **B-15** Shared Memory/WebSocket State Sync (score: 20.0). Eliminates manual export/import loop between browser and TUI.
+
 **Deferred:** T-1 tax-awareness, B-7 margin buying-power number, B-8 CSV
 auto-detect, E-\* Phase B+.
 
@@ -200,3 +298,4 @@ auto-detect, E-\* Phase B+.
 > trusting everything else the engine does and is nearly free — so it jumps to
 > Phase 0 while the heavier engine arc (Phases 1–3) stays after the Track-A
 > quick wins.
+
