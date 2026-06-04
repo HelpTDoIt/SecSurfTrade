@@ -795,6 +795,8 @@
         );
         const importFileRef = useRef(null);
         const importStateRef = useRef(null);
+        const importFillsJsonRef = useRef(null);
+        const [fillsImportBanner, setFillsImportBanner] = useState(null); // {ok: bool, message: string} | null
         const [importedPositions, setImportedPositions] = useState(
           SAVED.importedPositions ?? null,
         );
@@ -2054,6 +2056,97 @@
           reader.readAsText(file);
         };
 
+        const applyImportedFills = useCallback(
+          (doc) => {
+            if (!doc.schema_version || !String(doc.schema_version).startsWith("fills/"))
+              throw new Error('Not a valid fills file (expected schema_version "fills/...").');
+            const docFills = doc.fills || [];
+
+            const orderRows = [];
+            Object.entries(results).forEach(([acct, res]) => {
+              (res.sells || []).forEach((sell) => {
+                orderRows.push({ acct, strategy: sell.strategy, side: "sell", ticker: sell.ticker });
+              });
+              (res.buys || []).forEach((buy) => {
+                orderRows.push({ acct, strategy: buy.strategy, side: "buy", ticker: buy.ticker });
+              });
+            });
+
+            const newFills = JSON.parse(JSON.stringify(fills));
+            const unmatched = [];
+
+            docFills.forEach((fill) => {
+              const fillSymbol = (fill.symbol || "").toUpperCase();
+              const fillSide = (fill.side || "").toLowerCase();
+              const fillQty = fill.qty || 0;
+              const fillPrice = fill.price || 0;
+
+              const matches = orderRows.filter(
+                (r) =>
+                  r.ticker.toUpperCase() === fillSymbol &&
+                  r.side === fillSide,
+              );
+
+              if (matches.length === 1) {
+                const { acct, strategy, side } = matches[0];
+                if (!newFills[acct]) newFills[acct] = {};
+                if (!newFills[acct][strategy])
+                  newFills[acct][strategy] = { sells: [], buys: [] };
+                const type = side === "sell" ? "sells" : "buys";
+                newFills[acct][strategy][type].push({
+                  id: Date.now() + Math.random(),
+                  price: fillPrice,
+                  qty: fillQty,
+                });
+              } else {
+                unmatched.push({
+                  symbol: fillSymbol,
+                  side: fillSide,
+                  qty: fillQty,
+                  price: fillPrice,
+                  matchCount: matches.length,
+                });
+              }
+            });
+
+            setFills(newFills);
+
+            if (unmatched.length > 0) {
+              const lines = unmatched.map(
+                (u) =>
+                  `${u.symbol} ${u.side.toUpperCase()} ${u.qty}@${u.price}` +
+                  (u.matchCount === 0 ? " (no matching order)" : ` (${u.matchCount} ambiguous matches)`),
+              );
+              setFillsImportBanner({
+                ok: false,
+                message: `${unmatched.length} fill(s) need manual placement:\n` + lines.join("\n"),
+              });
+            } else {
+              setFillsImportBanner({
+                ok: true,
+                message: `Imported ${docFills.length} fill(s) successfully.`,
+              });
+            }
+          },
+          [results, fills],
+        );
+
+        const importFillsFromJSON = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            try {
+              const doc = JSON.parse(ev.target.result);
+              applyImportedFills(doc);
+            } catch (err) {
+              alert("Failed to import fills: " + err.message);
+            }
+            e.target.value = "";
+          };
+          reader.readAsText(file);
+        };
+
         const fetchCloses = async () => {
           if (tickers.length === 0) return;
           setFetching(true);
@@ -2382,6 +2475,19 @@
                     >
                       ⬆ Import Fills
                     </button>
+                    <input
+                      ref={importFillsJsonRef}
+                      type="file"
+                      accept=".json"
+                      style={{ display: "none" }}
+                      onChange={importFillsFromJSON}
+                    />
+                    <button
+                      style={{ ...S.btn2, color: "#e3b341", borderColor: "#9e6a03" }}
+                      onClick={() => importFillsJsonRef.current?.click()}
+                    >
+                      ⬆ Import OCR fills
+                    </button>
                     <button
                       style={{
                         ...S.btn2,
@@ -2404,6 +2510,32 @@
                     </button>
                   </div>
                 </div>
+                {fillsImportBanner && (
+                  <div
+                    style={{
+                      margin: "8px 0",
+                      padding: "10px 14px",
+                      background: fillsImportBanner.ok ? "#0d2818" : "#3d1f00",
+                      border: `1px solid ${fillsImportBanner.ok ? "#238636" : "#9e6a03"}`,
+                      borderRadius: 6,
+                      fontSize: 12,
+                      color: fillsImportBanner.ok ? "#3fb950" : "#e3b341",
+                      whiteSpace: "pre-wrap",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      gap: 8,
+                    }}
+                  >
+                    <span>{fillsImportBanner.message}</span>
+                    <button
+                      style={{ ...S.btnSm, flexShrink: 0 }}
+                      onClick={() => setFillsImportBanner(null)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
                 <div style={S.row}>
                   <div style={S.col}>
                     <div style={S.met}>
