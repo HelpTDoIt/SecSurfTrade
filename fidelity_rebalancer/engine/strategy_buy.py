@@ -27,6 +27,7 @@ from adapters import Level2Snapshot, QuoteSnapshot
 from engine import observability
 from engine.chunker import build_buy_chunks, round_to_tick, tick
 from engine.decision_context import DecisionContext
+from engine.escalation import _escalate
 from engine.size_context import PositionSizeContext
 from engine.spread_context import SpreadContext
 from engine.strategy_sell import get_adv  # cached per-symbol; reuse
@@ -161,17 +162,9 @@ def _decide(
 
 
 # ── Buy-side urgency escalation ──────────────────────────────────────────
-# Time-based checkpoints (buy side only — sells don't consistently hit thresholds).
-#   0-90 min  (9:30-11:00): use rule's urgency as-is
-#  90-210 min (11:00-1:00): patient → normal, nudge limit toward ask
-# 210-330 min  (1:00-3:00): any → aggressive, limit at ask
-# 330+ min     (3:00-4:00): aggressive, limit at ask+1 tick
-
-_ESCALATION_CHECKPOINTS = [
-    (90,  "normal",     0.75),   # 75% toward ask from current limit
-    (210, "aggressive", 1.0),    # at ask
-    (330, "aggressive", 1.0),    # at ask + 1 tick (handled specially)
-]
+# The time-of-day ramp lives in the side-aware engine.escalation._escalate
+# (buy nudges the limit toward the ask).  _escalate_buy is a thin shim that
+# delegates there; it is kept only for its stable name and the buy-parity test.
 
 
 def _escalate_buy(
@@ -182,46 +175,14 @@ def _escalate_buy(
     px_tick: float,
     market_minutes: Optional[int],
 ) -> tuple[str, float, list[str]]:
-    """Escalate buy urgency based on time-of-day.  Returns (urgency, limit, reasoning)."""
-    if market_minutes is None or market_minutes < 0:
-        return urgency, limit_price, reasoning
+    """Escalate buy urgency by time-of-day (delegates to engine.escalation).
 
-    ask = quote.ask or quote.last or quote.bid
-    if not ask or ask <= 0:
-        return urgency, limit_price, reasoning
-
-    # Find which checkpoint applies (the last one whose threshold ≤ market_minutes)
-    target_urgency = None
-    ask_frac = 0.0
-    for threshold, t_urg, frac in _ESCALATION_CHECKPOINTS:
-        if market_minutes >= threshold:
-            target_urgency = t_urg
-            ask_frac = frac
-        else:
-            break
-
-    if target_urgency is None:
-        return urgency, limit_price, reasoning
-
-    # Past last checkpoint: ask + 1 tick
-    if market_minutes >= _ESCALATION_CHECKPOINTS[-1][0]:
-        new_limit = round_to_tick(ask + px_tick, ask)
-        return "aggressive", new_limit, reasoning + [
-            f"Urgency escalation: {market_minutes} min into session (≥{_ESCALATION_CHECKPOINTS[-1][0]} min). "
-            f"LIMIT raised to ask+1 tick ${new_limit:.4f} to ensure same-day fill.",
-        ]
-
-    _URGENCY_RANK = {"patient": 0, "normal": 1, "aggressive": 2}
-    if _URGENCY_RANK.get(target_urgency, 0) <= _URGENCY_RANK.get(urgency, 0):
-        return urgency, limit_price, reasoning
-
-    new_limit = round_to_tick(
-        limit_price + (ask - limit_price) * ask_frac, ask
+    Thin wrapper over ``_escalate("buy", ...)``: the buy side nudges the limit
+    toward the ask.  Returns ``(urgency, limit, reasoning)``.
+    """
+    return _escalate(
+        "buy", urgency, limit_price, reasoning, quote, px_tick, market_minutes,
     )
-    return target_urgency, new_limit, reasoning + [
-        f"Urgency escalation: {market_minutes} min into session → {target_urgency}. "
-        f"LIMIT adjusted to ${new_limit:.4f}.",
-    ]
 
 
 def _chunk_id(account: str, ticker: str, idx: int) -> str:

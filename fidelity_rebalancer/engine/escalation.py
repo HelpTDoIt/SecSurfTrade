@@ -9,16 +9,10 @@ side of the book:
   * **sell** → toward the **bid**  (give up edge to get filled)
 
 The checkpoints below are time-based (minutes since the 9:30 ET open) and are
-the symmetric generalisation of the buy-only ramp that currently lives in
-``strategy_buy.py::_escalate_buy``.
-
-NOTE (dedupe follow-up for the orchestrator): the ramp logic here is a
-deliberate DUPLICATE of ``strategy_buy.py::_escalate_buy``.  To keep this
-change's footprint off the buy generator (owned by a concurrent lane this
-wave), ``_escalate_buy`` was left untouched.  Post-merge, ``_escalate_buy``
-should delegate to ``_escalate("buy", ...)`` and then be deleted — the two are
-behaviourally identical for the buy side by construction (see the buy-parity
-test in ``tests/test_strategy.py``).
+the symmetric generalisation of the original buy-only ramp.  This module is now
+the single implementation: ``strategy_buy.py::_escalate_buy`` is a thin shim
+that delegates here with ``side="buy"`` (kept only for its stable name and the
+buy-parity test in ``tests/test_strategy.py``).
 
 Pure module: no file/network/print I/O (enforced by
 ``tests/test_calculator.py::test_no_io_in_engine``).
@@ -35,7 +29,7 @@ _log = logging.getLogger(__name__)
 
 Side = Literal["buy", "sell"]
 
-# Time-based checkpoints, mirrored from strategy_buy._ESCALATION_CHECKPOINTS.
+# Time-based checkpoints (the single source of truth for the urgency ramp).
 #   0-90 min  (9:30-11:00): use the rule's urgency as-is
 #  90-210 min (11:00-1:00): patient → normal, nudge limit 75% toward the touch
 # 210-330 min  (1:00-3:00): any → aggressive, limit at the touch
