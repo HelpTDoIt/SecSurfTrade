@@ -4,9 +4,16 @@ End-of-day trade-journal report.
 Reads the append-only JSONL audit log(s) written by tui/monitor.py and prints
 a human-readable post-session summary.  This tool NEVER places trades.
 
+By default the report is scoped to TODAY (the current local day) so a routine
+end-of-session run shows only this session's activity, not the whole history.
+Use ``--since all`` for a full-history audit, or ``--since YYYY-MM-DD`` for a
+specific day.
+
 Usage (from SecSurfTrade/ or fidelity_rebalancer/):
-    python -m fidelity_rebalancer.cli.eod_report --journal logs/journal*.jsonl
-    python -m cli.eod_report --journal logs/journal_e2e_demo.jsonl
+    python -m cli.eod_report                       # today's session (default)
+    python -m cli.eod_report --since all           # full journal history
+    python -m cli.eod_report --since 2026-06-03     # a specific local day
+    python -m cli.eod_report --journal logs/journal_e2e_demo.jsonl --since all
 """
 
 from __future__ import annotations
@@ -16,7 +23,7 @@ import glob
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 _ROOT = Path(__file__).parent.parent
@@ -111,6 +118,47 @@ def _to_local_display(ts: str) -> str:
     if dt is None:
         return (ts or "")[:19].replace("T", " ")
     return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def _local_date(ts: str) -> date | None:
+    """Return the LOCAL calendar date of an ISO-8601 timestamp, or None.
+
+    The journal stores UTC; "today" in the EOD report means today in the
+    reader's local wall-clock, so the instant is converted before its date is
+    taken (a 23:00 ET event must not read as the next UTC day).
+    """
+    dt = _parse_iso(ts)
+    if dt is None:
+        return None
+    return dt.astimezone().date()
+
+
+def filter_to_date(
+    entries: list[dict], target: date | None
+) -> tuple[list[dict], int]:
+    """Keep only entries whose LOCAL date equals ``target``.
+
+    Returns ``(kept, n_hidden)`` where ``n_hidden`` is the number of dated
+    entries excluded by the window (so the report can tell the reader history
+    exists outside the window rather than implying the journal is empty).
+
+    ``target=None`` disables filtering: every entry is kept, ``n_hidden`` is 0.
+
+    Entries whose timestamp cannot be parsed into a date are ALWAYS kept and do
+    NOT count toward ``n_hidden`` -- consistent with this module's rule that
+    nothing (unknown event types, malformed lines) silently vanishes.
+    """
+    if target is None:
+        return list(entries), 0
+    kept: list[dict] = []
+    n_hidden = 0
+    for entry in entries:
+        d = _local_date(entry.get("ts", ""))
+        if d is None or d == target:
+            kept.append(entry)
+        else:
+            n_hidden += 1
+    return kept, n_hidden
 
 
 def summarize(entries: list[dict]) -> JournalSummary:
@@ -269,10 +317,17 @@ def format_report(
     n_malformed: int,
     file_labels: list[str] | None = None,
     unreadable: list[str] | None = None,
+    *,
+    window_label: str | None = None,
+    n_hidden: int = 0,
 ) -> str:
     """
     Render summary as a printable ASCII text block.
     Pure function -- no I/O.
+
+    ``window_label`` (e.g. "today (2026-06-04 local)") and ``n_hidden`` (entries
+    outside the window) are shown in the header when a time window is active, so
+    a scoped run reads honestly rather than implying the journal is empty.
     """
     lines: list[str] = []
     sep = "-" * 64
@@ -288,11 +343,20 @@ def format_report(
     else:
         lines.append("  File : (none)")
 
+    if window_label:
+        lines.append(f"  Window       : {window_label}")
+
     total_entries = sum(summary.event_counts.values())
-    lines.append(f"  Lines read   : {total_entries + n_malformed}")
+    # Lines read counts every parsed line: in-window valid + hidden + malformed.
+    lines.append(f"  Lines read   : {total_entries + n_hidden + n_malformed}")
     lines.append(f"  Valid entries: {total_entries}")
     if n_malformed:
         lines.append(f"  Malformed lines (skipped): {n_malformed}")
+    if n_hidden:
+        lines.append(
+            f"  Hidden (outside window)  : {n_hidden}"
+            "   [use --since all to include]"
+        )
     if unreadable:
         for path in unreadable:
             lines.append(f"  Unreadable file (skipped): {path}")
@@ -358,14 +422,43 @@ def main() -> None:
     )
     parser.add_argument(
         "--journal",
-        default="logs/journal*.jsonl",
+        default="logs/journal.jsonl",
         help=(
             "Glob or explicit path to journal JSONL file(s). "
-            'Default: "logs/journal*.jsonl". '
+            'Default: "logs/journal.jsonl" (the live monitor log; the '
+            "journal_e2e_demo fixture is NOT picked up). "
             "Resolved relative to fidelity_rebalancer/ if not found as-is."
         ),
     )
+    parser.add_argument(
+        "--since",
+        default="today",
+        help=(
+            "Time window to report. 'today' (default) = the current local day; "
+            "'all' = the full journal history; or an explicit YYYY-MM-DD local "
+            "date. View the demo fixture with: "
+            "--journal logs/journal_e2e_demo.jsonl --since all."
+        ),
+    )
     args = parser.parse_args()
+
+    # Resolve the requested window up front (fail fast on a bad date).
+    if args.since == "all":
+        target_date: date | None = None
+        window_label = "all history"
+    elif args.since == "today":
+        target_date = date.today()
+        window_label = f"today ({target_date.isoformat()} local)"
+    else:
+        try:
+            target_date = date.fromisoformat(args.since)
+        except ValueError:
+            print(
+                f"Invalid --since value: {args.since!r}. "
+                "Use 'today', 'all', or an explicit YYYY-MM-DD date."
+            )
+            return
+        window_label = f"{target_date.isoformat()} (local)"
 
     # Resolve: try as-is first, then relative to package root
     raw_pattern = args.journal
@@ -382,8 +475,16 @@ def main() -> None:
 
     files = sorted(files)
     entries, n_malformed, unreadable = load_journal(files)
+    entries, n_hidden = filter_to_date(entries, target_date)
     s = summarize(entries)
-    report = format_report(s, n_malformed, file_labels=files, unreadable=unreadable)
+    report = format_report(
+        s,
+        n_malformed,
+        file_labels=files,
+        unreadable=unreadable,
+        window_label=window_label,
+        n_hidden=n_hidden,
+    )
     print(report)
 
 

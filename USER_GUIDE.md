@@ -528,20 +528,23 @@ Prints the trading-day percentage elapsed, portfolio buy completion, and a per-b
 
 ### `cli.eod_report`
 
-End-of-day trade-journal report. Reads the append-only JSONL audit log(s) written by the live monitor (`logs/journal*.jsonl`) and prints a human-readable post-session summary. This tool **never** places trades — it only reads logs.
+End-of-day trade-journal report. Reads the append-only JSONL audit log written by the live monitor (`logs/journal.jsonl`) and prints a human-readable post-session summary. **By default it is scoped to today** (the current local day), so a routine end-of-session run reflects only that session — not the whole history. This tool **never** places trades — it only reads logs.
 
 ```powershell
-python -m cli.eod_report
-python -m cli.eod_report --journal logs/journal_e2e_demo.jsonl
+python -m cli.eod_report                       # today's session (default)
+python -m cli.eod_report --since all           # full journal history
+python -m cli.eod_report --since 2026-06-03     # a specific local day
+python -m cli.eod_report --journal logs/journal_e2e_demo.jsonl --since all
 ```
 
-The report includes the session span (start/end/duration in local time), an event tally, a chronological **notable-events timeline** (everything except routine `heartbeat`/`poll` noise — including any unknown or newly-introduced event type, so nothing silently vanishes), and a poll-error warnings section. Malformed lines are skipped and counted; unreadable files are reported distinctly.
+The report includes the active window and (when scoped) a count of entries hidden outside it, the session span (start/end/duration in local time), an event tally, a chronological **notable-events timeline** (everything except routine `heartbeat`/`poll` noise — including any unknown or newly-introduced event type, so nothing silently vanishes), and a poll-error warnings section. Malformed lines are skipped and counted; unreadable files are reported distinctly.
 
 **Options:**
 
-| Flag        | Default               | Description                                                                                                     |
-| ----------- | --------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `--journal` | `logs/journal*.jsonl` | Glob or explicit path to journal JSONL file(s). Resolved relative to `fidelity_rebalancer/` if not found as-is. |
+| Flag        | Default              | Description                                                                                                                          |
+| ----------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `--journal` | `logs/journal.jsonl` | Glob or explicit path to journal JSONL file(s). The `journal_e2e_demo` fixture is not picked up by default. Resolved relative to `fidelity_rebalancer/` if not found as-is. |
+| `--since`   | `today`              | Time window: `today` (current local day), `all` (full history), or an explicit `YYYY-MM-DD` local date.                             |
 
 ### `scripts/sectorsurfer_signals.py`
 
