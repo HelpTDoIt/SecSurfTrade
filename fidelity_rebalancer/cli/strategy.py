@@ -33,9 +33,13 @@ from adapters import Level2Snapshot, WatchlistRow
 from adapters.yfinance_fallback import (
     YFinanceWatchlistAdapter,
     adv_to_vol5min,
+    approx_intraday_vwap,
     watchlist_row_to_quote,
 )
+from engine import observability
 from engine.chunker import _DAILY_SIGMA_BPS, build_chunks_pov, vol_profile_multiplier
+from engine.decision_context import DecisionContext
+from engine.size_context import size_context_for
 from engine.spread_context import spread_context_for
 from engine.strategy_buy import generate_buy_strategy
 from engine.strategy_sell import generate_sell_strategy
@@ -466,10 +470,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.verbose:
-        logging.basicConfig(
-            level=logging.DEBUG, format="%(message)s", stream=sys.stderr
-        )
+    # Engine observability: always-on file log (INFO; DEBUG + console with -v)
+    # plus a structured per-ticker decision trail.  Both land in the gitignored
+    # logs/ dir.  --verbose unchanged in spirit: it still gates the sensitive
+    # per-trade detail (now to logs/strategy.log + stderr instead of stderr only).
+    log_dir = _ROOT / "logs"
+    strategy_log = observability.setup_logging(
+        log_dir, verbose=args.verbose, filename="strategy.log"
+    )
+    decisions_path = observability.enable_decision_log(log_dir / "decisions.jsonl")
+    _log.info("strategy run: source=%s verbose=%s", args.source, args.verbose)
+    print(f"Engine log -> {strategy_log}  |  decision trail -> {decisions_path}")
 
     state = load_state(resolve_path(args.state))
 
@@ -492,6 +503,28 @@ def main() -> None:
     except OCRShortfall as exc:
         print(f"{OCR_SHORTFALL_MARKER}: {exc}", file=sys.stderr)
         sys.exit(OCR_SHORTFALL_EXIT)
+
+    # G-3: approximate intraday VWAP for the yfinance path ONLY.  The ATP
+    # watchlist carries an exact streamed VWAP; yfinance rows do not (vwap=0.0),
+    # so the VWAP-relative rules (sell 6/7, buy 4/5) could never fire on
+    # --source yfinance.  Reconstruct an APPROXIMATE VWAP from 1-minute bars for
+    # any ticker whose row VWAP is missing.  Gated to --source yfinance so the
+    # ATP path is provably untouched (no extra network call there).
+    vwap_map: dict[str, float] = {}
+    if args.source == "yfinance":
+        need_vwap = [
+            sym for sym in all_tickers
+            if not (watchlist.get(sym) and watchlist[sym].vwap)
+        ]
+        if need_vwap:
+            print(
+                f"Computing approximate intraday VWAP for {len(need_vwap)} "
+                "ticker(s) from yfinance 1-min bars..."
+            )
+            for sym in need_vwap:
+                v = approx_intraday_vwap(sym)
+                if v and v > 0:
+                    vwap_map[sym] = v
 
     # Per-symbol realized volatility for impact model
     print(f"Computing realized volatility for {len(all_tickers)} ticker(s)...")
@@ -632,18 +665,29 @@ def main() -> None:
             adv_label = "adv10=0"
 
         l2 = _get_l2(sell.ticker)
+        # G-6: ONE ADV definition end-to-end — the watchlist 10-day ADV from the
+        # single market-data fetch.  The generator only falls back to get_adv()
+        # (30-day yfinance) when this is None (no row).
         adv_val = float(row.avg_vol_10d) if row is not None else None
         sc = spread_context_for(sell.ticker, quote.bid, quote.ask)
-        vwap_val = float(row.vwap) if (row is not None and row.vwap) else None
+        zc = size_context_for(sell.ticker)
+        vwap_val = (
+            float(row.vwap)
+            if (row is not None and row.vwap)
+            else vwap_map.get(sell.ticker)
+        )
         strat, chunks = generate_sell_strategy(
             sell,
             quote,
             l2,
             vol5min=vol5min,
-            adv=adv_val,
-            spread_ctx=sc,
-            vwap=vwap_val,
-            market_minutes=mkt_minutes,
+            ctx=DecisionContext(
+                market_minutes=mkt_minutes,
+                spread_ctx=sc,
+                vwap=vwap_val,
+                adv=adv_val,
+                size_ctx=zc,
+            ),
         )
         if not l2.bids:
             chunks, pov_info = _rechunk_sell_pov(
@@ -714,18 +758,29 @@ def main() -> None:
             adv_label = "adv10=0"
 
         l2 = _get_l2(buy.ticker)
+        # G-6: ONE ADV definition end-to-end — the watchlist 10-day ADV from the
+        # single market-data fetch.  The generator only falls back to get_adv()
+        # (30-day yfinance) when this is None (no row).
         adv_val = float(row.avg_vol_10d) if row is not None else None
         sc = spread_context_for(buy.ticker, quote.bid, quote.ask)
-        vwap_val = float(row.vwap) if (row is not None and row.vwap) else None
+        zc = size_context_for(buy.ticker)
+        vwap_val = (
+            float(row.vwap)
+            if (row is not None and row.vwap)
+            else vwap_map.get(buy.ticker)
+        )
         strat, chunks = generate_buy_strategy(
             buy,
             quote,
             l2,
             vol5min=vol5min,
-            adv=adv_val,
-            spread_ctx=sc,
-            vwap=vwap_val,
-            market_minutes=mkt_minutes,
+            ctx=DecisionContext(
+                market_minutes=mkt_minutes,
+                spread_ctx=sc,
+                vwap=vwap_val,
+                adv=adv_val,
+                size_ctx=zc,
+            ),
         )
         if not l2.asks:
             chunks, pov_info = _rechunk_buy_pov(

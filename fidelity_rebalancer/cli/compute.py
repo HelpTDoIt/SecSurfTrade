@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,7 @@ sys.path.insert(0, str(_ROOT))
 
 from cli import resolve_output_path, resolve_path
 from adapters.csv_reader import read_fidelity_csv
+from engine import observability
 from engine.calculator import calc_trades
 from engine.chunker import (
     build_buy_chunks,
@@ -40,6 +42,9 @@ from state.schema import (
     SellRecord,
     SignalInput,
 )
+
+
+_log = logging.getLogger(__name__)
 
 
 def _load_accounts_config() -> dict[str, dict]:
@@ -268,7 +273,22 @@ def main() -> None:
         default="legacy_dollar",
         help="Chunker mode: legacy $100K dollar chunker (default) or book-relative",
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Echo engine DEBUG detail (dollar figures, per-strategy) to the "
+        "console and logs/strategy.log. Without it only INFO/WARNING are logged.",
+    )
     args = parser.parse_args()
+
+    # Engine observability: surface the calculator's INFO/WARNING in
+    # logs/strategy.log (DEBUG + console with -v).  No decision log here — the
+    # per-ticker strategy_decision records come from cli.strategy, not compute.
+    observability.setup_logging(
+        _ROOT / "logs", verbose=args.verbose, filename="strategy.log"
+    )
+    _log.info("compute run: chunker=%s verbose=%s", args.chunker, args.verbose)
 
     # Resolve CSV directory
     if args.inputs:

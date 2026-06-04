@@ -25,6 +25,7 @@ from engine.chunker import (
     estimate_impact_bps,
     vol_profile_multiplier,
 )
+from engine.decision_context import DecisionContext
 from engine.spread_context import SpreadContext, spread_context_for
 from engine.strategy_buy import _escalate_buy, generate_buy_strategy
 from engine.strategy_sell import generate_sell_strategy
@@ -123,8 +124,7 @@ class TestVWAPRules:
             book,
             vol5min=20_000.0,
             today=date(2026, 4, 15),
-            adv=1_000_000,
-            vwap=100.20,
+            ctx=DecisionContext(adv=1_000_000, vwap=100.20),
         )
         assert strat.rule == "above_vwap"
         assert strat.urgency == "aggressive"
@@ -149,8 +149,7 @@ class TestVWAPRules:
             book,
             vol5min=20_000.0,
             today=date(2026, 4, 15),
-            adv=1_000_000,
-            vwap=100.00,
+            ctx=DecisionContext(adv=1_000_000, vwap=100.00),
         )
         assert strat.rule == "below_vwap"
         assert strat.urgency == "patient"
@@ -175,8 +174,7 @@ class TestVWAPRules:
             quote,
             book,
             vol5min=20_000.0,
-            adv=10_000_000,
-            vwap=100.00,
+            ctx=DecisionContext(adv=10_000_000, vwap=100.00),
         )
         assert strat.rule == "below_vwap"
         assert strat.urgency == "normal"
@@ -206,8 +204,7 @@ class TestVWAPRules:
             quote,
             book,
             vol5min=20_000.0,
-            adv=10_000_000,
-            vwap=100.00,
+            ctx=DecisionContext(adv=10_000_000, vwap=100.00),
         )
         assert strat.rule == "above_vwap"
         assert strat.urgency == "patient"
@@ -237,8 +234,7 @@ class TestVWAPRules:
             book,
             vol5min=20_000.0,
             today=date(2026, 4, 15),
-            adv=1_000_000,
-            vwap=None,
+            ctx=DecisionContext(adv=1_000_000, vwap=None),
         )
         assert strat.rule == "default"
 
@@ -319,8 +315,7 @@ class TestGapCapture:
             book,
             vol5min=50_000.0,
             today=date(2026, 4, 15),
-            adv=10_000_000,
-            market_minutes=10,
+            ctx=DecisionContext(adv=10_000_000, market_minutes=10),
         )
         assert strat.rule == "gap_capture"
         assert strat.urgency == "aggressive"
@@ -353,8 +348,7 @@ class TestGapCapture:
             book,
             vol5min=50_000.0,
             today=date(2026, 4, 15),
-            adv=10_000_000,
-            market_minutes=45,
+            ctx=DecisionContext(adv=10_000_000, market_minutes=45),
         )
         assert strat.rule != "gap_capture"
 
@@ -383,8 +377,7 @@ class TestGapCapture:
             book,
             vol5min=50_000.0,
             today=date(2026, 4, 15),
-            adv=10_000_000,
-            market_minutes=10,
+            ctx=DecisionContext(adv=10_000_000, market_minutes=10),
         )
         assert strat.rule != "gap_capture"
 
@@ -515,16 +508,14 @@ class TestBuyUrgencyEscalation:
             quote,
             book,
             vol5min=20_000.0,
-            adv=10_000_000,
-            market_minutes=30,
+            ctx=DecisionContext(adv=10_000_000, market_minutes=30),
         )
         strat_late, _ = generate_buy_strategy(
             buy,
             quote,
             book,
             vol5min=20_000.0,
-            adv=10_000_000,
-            market_minutes=350,
+            ctx=DecisionContext(adv=10_000_000, market_minutes=350),
         )
         assert strat_late.urgency == "aggressive"
 

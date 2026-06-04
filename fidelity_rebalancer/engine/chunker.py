@@ -18,12 +18,15 @@ Pure functions — no I/O.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import random
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Optional
+
+_log = logging.getLogger(__name__)
 
 CHUNK_DEFAULT = 100_000   # legacy $100K chunker default
 
@@ -395,12 +398,36 @@ def build_chunks_pov(
         n = 1 if total_shares * limit_price < 50_000 else 2
         chunks = _split_with_jitter(total_shares, limit_price, n, rng, jitter_pct)
         info["n_chunks"] = len(chunks)
+        _log.debug(
+            "build_chunks_pov[%s]: ADV unknown — dollar-split into %d chunk(s)",
+            side,
+            len(chunks),
+        )
         return chunks, info
 
     pov_pct = (total_shares / adv) * 100.0
     tier, label = _pov_tier(pov_pct, spread_bps)
     n = _chunk_count(tier, pov_pct, side)
     impact_bps = estimate_impact_bps(total_shares, adv, sigma_bps=sigma_bps)
+
+    # pov_pct / impact / n are ratios + counts (not raw sizes) -> safe to log.
+    _log.debug(
+        "build_chunks_pov[%s]: pov=%.2f%% tier=%d(%s) impact=%.1fbps -> %d chunk(s)",
+        side,
+        pov_pct,
+        tier,
+        label,
+        impact_bps,
+        n,
+    )
+    if tier == 4:
+        _log.warning(
+            "build_chunks_pov[%s]: market-moving order %.1f%% of ADV "
+            "(impact ~%.0f bps) — consider splitting across days",
+            side,
+            pov_pct,
+            impact_bps,
+        )
 
     chunks = _split_with_jitter(total_shares, limit_price, n, rng, jitter_pct)
     info.update({

@@ -21,21 +21,46 @@ from __future__ import annotations
 
 import io
 import os
+import re
+import time
 from datetime import datetime, date, timezone, timedelta
 from functools import lru_cache
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 from PIL import Image, ImageGrab
 
-# Flip to True at runtime via enable_debug() to save images and print OCR hits
+# Flip to True at runtime via enable_debug() to save images and print OCR hits.
+# _DEBUG_DIR: where timestamped PNGs are written (None → current directory).
 _DEBUG = False
+_DEBUG_DIR: Path | None = None
 
 
-def enable_debug() -> None:
-    """Call before adapters run to enable image saving and OCR hit printing."""
-    global _DEBUG
+def enable_debug(save_dir: Path | str | None = None) -> None:
+    """Enable image saving and OCR hit printing.
+
+    Args:
+        save_dir: Directory to write timestamped PNG snapshots.  Created if it
+                  does not exist.  Defaults to the current working directory.
+    """
+    global _DEBUG, _DEBUG_DIR
     _DEBUG = True
+    if save_dir is not None:
+        _DEBUG_DIR = Path(save_dir)
+        _DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _debug_save(img, label: str) -> None:
+    """Save *img* (numpy array or PIL Image) to the debug directory with a timestamp."""
+    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+    fname = f"{ts}_{label}.png"
+    dest = (_DEBUG_DIR / fname) if _DEBUG_DIR else Path(fname)
+    if hasattr(img, "save"):
+        img.save(dest)
+    else:
+        Image.fromarray(img).save(dest)
+    return dest
 
 
 from adapters import Level, Level2Snapshot, OrderRow, OrderStatus
@@ -65,16 +90,49 @@ def _capture_full_window() -> np.ndarray:
     - WinUI/MAUI apps that render via DirectX/GPU (content invisible to ImageGrab
       when another window is on top)
     - Windows that are maximised but behind the calling terminal
+
+    If the window is minimised Windows parks it at an off-screen position and stops
+    maintaining a full GPU render buffer — PrintWindow returns a tiny (≈158×26px)
+    thumbnail.  OCR on a thumbnail finds the title-bar text but no order rows, so
+    _orders_crop_box returns None and get_orders() silently returns [].  We restore
+    the window first so DWM composites a full frame before we capture.
     """
     import ctypes
     import win32gui
     import win32ui
+    import win32con
 
     app = get_app()
-    hwnd = app.top_window().handle
+    try:
+        hwnd = app.top_window().handle
+    except Exception:
+        # top_window() raises when FT+ is minimised / parked off-screen because
+        # pywinauto considers those windows "not visible".  windows() enumerates
+        # ALL top-level windows for the process regardless of minimised state.
+        wins = app.windows()
+        if not wins:
+            raise RuntimeError(
+                "FT+ has no accessible windows — "
+                "ensure Fidelity Trader+ is running and logged in."
+            )
+        hwnd = wins[0].handle
+
+    # Restore window if minimised or parked off-screen.  ShowWindow(SW_RESTORE)
+    # is idempotent when the window is already normal/maximised.
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        time.sleep(0.5)  # let DWM composite a fresh frame
 
     left, top, right, bottom = win32gui.GetWindowRect(hwnd)
     w, h = right - left, bottom - top
+
+    # Guard: a suspiciously small window means we captured a thumbnail, not a full
+    # render.  Raise so with_retry fires rather than silently returning no orders.
+    if w < 400 or h < 200:
+        raise RuntimeError(
+            f"FT+ window captured at {w}×{h}px — too small to contain an Orders "
+            "panel; window may still be restoring from minimised state"
+        )
 
     hwnd_dc = win32gui.GetWindowDC(hwnd)
     mem_dc = win32ui.CreateDCFromHandle(hwnd_dc)
@@ -96,19 +154,16 @@ def _capture_full_window() -> np.ndarray:
     win32gui.ReleaseDC(hwnd, hwnd_dc)
 
     if _DEBUG:
-        Image.fromarray(arr).save("debug_full_window.png")
-        print(f"[OCR DEBUG] PrintWindow capture {w}x{h}px -> debug_full_window.png")
+        dest = _debug_save(arr, "full_window")
+        print(f"[OCR DEBUG] PrintWindow capture {w}x{h}px -> {dest}")
     return arr
 
 
 def _run_ocr(img: np.ndarray, label: str = "ocr") -> list[_Cell]:
     """Run RapidOCR and return _Cell list; saves debug image and prints hits if enabled."""
     if _DEBUG:
-        Image.fromarray(img).save(f"debug_{label}.png")
-        print(
-            f"[OCR DEBUG] {label}: image {img.shape[1]}x{img.shape[0]}px"
-            f" -> debug_{label}.png"
-        )
+        dest = _debug_save(img, label)
+        print(f"[OCR DEBUG] {label}: image {img.shape[1]}x{img.shape[0]}px -> {dest}")
     ocr = _ocr_engine()
     result, _ = ocr(img)
     cells = _ocr_to_cells(result or [])
@@ -455,8 +510,10 @@ def _read_l2_ocr(symbol: str) -> Level2Snapshot:
 
     if _DEBUG:
         ph, pw = panel_crop.shape[:2]
-        Image.fromarray(panel_crop).save(f"debug_l2_{sym}_crop.png")
-        print(f"[L2 DEBUG] {sym} panel x={px0}..{px1} scaled {pw}x{ph}px (2x)")
+        dest = _debug_save(panel_crop, f"l2_{sym}_crop")
+        print(
+            f"[L2 DEBUG] {sym} panel x={px0}..{px1} scaled {pw}x{ph}px (2x) -> {dest}"
+        )
 
     ocr = _ocr_engine()
     result, _ = ocr(panel_crop)
@@ -542,13 +599,182 @@ _STATUS_MAP: dict[str, OrderStatus] = {
     "canceled": OrderStatus.Cancelled,
     "rejected": OrderStatus.Rejected,
 }
-_TICKER_RE = __import__("re").compile(r"^[A-Z]{1,6}(\.\w+)?$")
-_LIMIT_RE = __import__("re").compile(r"\$?\s*([\d,]+\.?\d*)")
+_TICKER_RE = re.compile(r"^[A-Z]{1,6}(\.\w+)?$")
+_LIMIT_RE = re.compile(r"\$?\s*([\d,]+\.?\d*)")
+
+# F-4a pattern anchors. The FT+ Orders grid in current builds renders NO visible
+# column-header row (the old parser anchored on a "Symbol" header that does not
+# exist, so it returned zero rows even though the panel was full of readable
+# orders). Instead we identify and parse each order row by per-cell semantics.
+_FILLED_FRAC_RE = re.compile(
+    r"(\d[\d,]*)\s*/\s*(\d[\d,]*)"
+)  # "66 / 100" -> filled/total
+_ORDERID_RE = re.compile(r"^[A-Z\d][0-9A-Z]{5,9}$")  # e.g. "27D1N8R8" or "F038HKMM"
+_ACCT_RE = re.compile(r"\*\s*\d{3,5}")  # account masks like "*6131"
+_INT_RE = re.compile(r"^\d[\d,]*$")  # a plain integer share-count cell
+_TIF_SET = {"GTC", "DAY", "GTD", "FOK", "IOC", "EXT", "GTX", "OPG"}
+# x-coordinate boundary separating the left Orders grid from the right-hand
+# Level-2 / watchlist panel. Cells beyond this are dropped BEFORE row clustering
+# so a watchlist ticker at the same y doesn't merge into an order row.
+# NOTE (F-4): layout/resolution-specific — revisit if the FT+ window layout changes.
+_ORDERS_GRID_MAX_X = 2050.0
+# F-4b: max height (px) of the Orders-panel crop fed to the second OCR pass.
+# Kept safely under the OCR engine's det_limit_side_len (2400) so the crop is
+# never downscaled — that downscale is exactly what drops the top grid rows.
+# For tall histories the crop is anchored at the grid's BOTTOM and trimmed to
+# this height (covers ~70+ rows), so the most-recent orders are always read.
+_ORDERS_CROP_MAX_H = 2300
+# Status keywords (checked in priority order: cancel/reject are terminal and win
+# over a partial-fill substring, e.g. "Verified Cancelled/Partially Filled").
+_STATUS_KEYWORDS = ("cancel", "reject", "partial", "fill", "open", "working", "queue")
 
 
 def _is_order_header(row: list[_Cell]) -> bool:
     low = {c.text.lower() for c in row}
     return bool(low & {"symbol", "action", "status", "amount"})
+
+
+def _status_from_text(text: str) -> OrderStatus:
+    """Map a free-text status cell to an OrderStatus (terminal states win)."""
+    t = text.lower()
+    if "cancel" in t:
+        return OrderStatus.Cancelled
+    if "reject" in t:
+        return OrderStatus.Rejected
+    if "partial" in t:
+        return OrderStatus.PartiallyFilled
+    if "fill" in t:  # "Filled at $X"
+        return OrderStatus.Filled
+    if "open" in t or "working" in t or "queue" in t:
+        return OrderStatus.Open
+    return OrderStatus.Open
+
+
+def _extract_order_from_row(row: list[_Cell]) -> "OrderRow | None":
+    """Extract one OrderRow from a clustered row of OCR cells by pattern.
+
+    Returns None when the row is not a recognizable order (no ticker, or no
+    status/account signal) — this is how header fragments, blank rows, and
+    stray L2/watchlist cells get filtered out without a column-header anchor.
+    """
+    cells = sorted(row, key=lambda c: c.x)
+    texts = [c.text.strip() for c in cells]
+
+    # Symbol = leftmost ticker-shaped cell.
+    symbol = ""
+    for c in cells:
+        t = c.text.strip().upper()
+        if _TICKER_RE.match(t):
+            symbol = t
+            break
+    if not symbol:
+        return None
+
+    # Side.
+    side = "BUY"
+    for t in texts:
+        tl = t.lower()
+        if tl == "buy" or tl.startswith("buy "):
+            side = "BUY"
+            break
+        if tl == "sell" or tl.startswith("sell "):
+            side = "SELL"
+            break
+
+    # Account (mask like "Rollover IRA *6131").
+    account = ""
+    for t in texts:
+        tl = t.lower()
+        if _ACCT_RE.search(t) or "ira" in tl or "individual" in tl or "roth" in tl:
+            account = t
+            break
+
+    # Status.
+    status: OrderStatus | None = None
+    for t in texts:
+        tl = t.lower()
+        if any(k in tl for k in _STATUS_KEYWORDS):
+            status = _status_from_text(t)
+            break
+
+    # A real order row must carry a status or an account; otherwise reject.
+    if status is None and not account:
+        return None
+
+    # Limit price + order-type presence from the "Order Type" cell
+    # ("Limit at $55.93" / "Market"). has_order_type doubles as an order-identity
+    # signal below — panel chrome (tab titles, filter bar) has no order-type cell.
+    limit_price = 0.0
+    has_order_type = False
+    for t in texts:
+        tl = t.lower()
+        if "limit" in tl:
+            has_order_type = True
+            m = _LIMIT_RE.search(t)
+            if m:
+                limit_price = parse_price(m.group(1)) or 0.0
+            break
+        if "market" in tl:
+            has_order_type = True
+            break
+
+    # Quantity + filled. Prefer the "filled / total" fraction cell; otherwise
+    # fall back to the plain share-count cell in the amount column (left of the
+    # status column at x~580).
+    qty = 0.0
+    filled = 0.0
+    frac = None
+    for t in texts:
+        m = _FILLED_FRAC_RE.search(t)
+        if m:
+            frac = m
+            break
+    if frac:
+        filled = float(frac.group(1).replace(",", ""))
+        qty = float(frac.group(2).replace(",", ""))
+    else:
+        for c in cells:
+            t = c.text.strip()
+            if c.x < 580 and _INT_RE.match(t):
+                qty = float(t.replace(",", ""))
+                break
+        if status == OrderStatus.Filled:
+            filled = qty
+
+    # Order id = rightmost alnum token starting with a digit (the FT+ order #).
+    order_id = ""
+    for c in sorted(cells, key=lambda c: -c.x):
+        t = c.text.strip().upper()
+        if _ORDERID_RE.match(t) and t not in _TIF_SET and t != symbol:
+            order_id = c.text.strip()
+            break
+    has_real_id = bool(order_id)
+    if not order_id:  # synthetic stable-ish fallback when the id didn't OCR
+        order_id = f"{symbol}-{side}-{limit_price:.2f}"
+
+    # Order-identity guard (F-4b): a real order row carries an order-id token or
+    # an order-type cell. Panel chrome that now falls inside the second-pass crop
+    # — the "Orders"/"Saved orders" tabs, the account dropdown, the filter bar —
+    # can match a ticker + account but never both of these, so reject it here.
+    if not has_real_id and not has_order_type:
+        return None
+
+    if status is None:
+        status = OrderStatus.Open
+
+    placed_at = datetime.now(tz=timezone.utc)
+    return OrderRow(
+        account=account,
+        symbol=symbol,
+        side=side,
+        qty=qty,
+        filled_qty=filled,
+        limit_price=limit_price,
+        status=status,
+        placed_at=placed_at,
+        last_update_at=placed_at,
+        order_id=order_id,
+    )
 
 
 def _find_orders_grid_ctrl(controls: list):
@@ -567,114 +793,91 @@ def _find_orders_grid_ctrl(controls: list):
 
 
 def _parse_orders_from_rows(rows: list[list[_Cell]]) -> list[OrderRow]:
-    # Find header to calibrate column x-positions
-    col_xs: list[float] = []
-    col_names: list[str] = []
-    for row in rows:
-        if _is_order_header(row):
-            col_xs = [c.x for c in row]
-            col_names = [c.text for c in row]
-            break
+    """Pattern-parse clustered OCR rows into OrderRows (F-4a).
 
+    Header rows (if any) and non-order rows are skipped automatically by
+    ``_extract_order_from_row`` returning None.
+    """
     order_rows: list[OrderRow] = []
     for row in rows:
         if _is_order_header(row):
             continue
-        txts = _texts(row)
-        if not txts:
-            continue
-
-        if col_xs:
-            # Map each cell to its nearest header column
-            row_dict: dict[str, str] = {}
-            for cell in row:
-                idx = _assign_col(cell.x, col_xs, col_names)
-                col = col_names[idx] if idx < len(col_names) else str(idx)
-                row_dict[col] = cell.text
-        else:
-            # Fallback: positional (Symbol=0, Action=1, Amount=2, OrderType=3, Status=4, ...)
-            names = [
-                "Symbol",
-                "Action",
-                "Amount",
-                "Order Type",
-                "Status",
-                "Filled",
-                "Last",
-                "$Chg",
-                "%Chg",
-                "Bid",
-                "Account",
-                "Mid",
-                "Ask",
-                "TIF",
-                "Conditions",
-                "Destination",
-                "Order Time",
-            ]
-            row_dict = {names[i]: txts[i] for i in range(min(len(names), len(txts)))}
-
-        symbol = row_dict.get("Symbol", "").strip().upper()
-        if not symbol or not _TICKER_RE.match(symbol):
-            continue
-
-        side = row_dict.get("Action", "BUY").upper()
-        qty = float(parse_size(row_dict.get("Amount", "0")) or 0)
-        status_txt = row_dict.get("Status", "open").lower().replace(" ", "")
-        status = _STATUS_MAP.get(status_txt, OrderStatus.Open)
-
-        filled_qty = float(parse_size(row_dict.get("Filled", "0")) or 0)
-
-        order_type = row_dict.get("Order Type", "")
-        m = _LIMIT_RE.search(order_type)
-        limit_price = parse_price(m.group(1)) if m else 0.0
-
-        account = row_dict.get("Account", "")
-        placed_at = datetime.now(tz=timezone.utc)
-
-        last_px = parse_price(row_dict.get("Last", "0"))
-        bid_px = parse_price(row_dict.get("Bid", "0"))
-        ask_px = parse_price(row_dict.get("Ask", "0"))
-        mid_px = parse_price(row_dict.get("Mid", "0"))
-        tif = row_dict.get("TIF", "").strip()
-
-        order_rows.append(
-            OrderRow(
-                account=account,
-                symbol=symbol,
-                side=side,
-                qty=qty,
-                filled_qty=filled_qty,
-                limit_price=limit_price,
-                status=status,
-                placed_at=placed_at,
-                last_update_at=placed_at,
-                last_price=last_px,
-                bid=bid_px,
-                ask=ask_px,
-                mid=mid_px,
-                tif=tif,
-            )
-        )
-
+        order = _extract_order_from_row(row)
+        if order is not None:
+            order_rows.append(order)
     return order_rows
+
+
+def _orders_crop_box(
+    cells: list[_Cell], img_w: int, img_h: int
+) -> tuple[int, int, int, int] | None:
+    """
+    F-4b: from a full-window OCR pass, derive a crop box around the Orders grid.
+
+    The full window (~3800px wide) exceeds the OCR detector's size limit, so it is
+    downscaled and the smallest/topmost grid text drops out. The order-id column
+    (rightmost grid cell) is large enough that the *lower* rows still survive, and
+    those are enough to locate the grid's right and bottom edges. The left edge is
+    the window edge (the grid is left-docked) and the box is anchored at the grid
+    BOTTOM, trimmed to ``_ORDERS_CROP_MAX_H`` so it never re-triggers a downscale.
+
+    Returns ``(x0, y0, x1, y1)`` for ``img[y0:y1, x0:x1]``, or None if no order
+    rows were detected (caller falls back to parsing the full-window cells).
+    """
+    id_cells = [
+        c
+        for c in cells
+        if 1500 < c.x < _ORDERS_GRID_MAX_X and _ORDERID_RE.match(c.text)
+    ]
+    if not id_cells:
+        return None
+    x1 = min(img_w, int(max(c.x for c in id_cells)) + 110)
+    y1 = min(img_h, int(max(c.y for c in id_cells)) + 40)
+    y0 = max(0, y1 - _ORDERS_CROP_MAX_H)
+    return (0, y0, x1, y1)
 
 
 def _read_orders_ocr() -> list[OrderRow]:
     full = _capture_full_window()
-    all_cells = _run_ocr(full, label="orders_full")
+    img_h, img_w = full.shape[:2]
 
-    # Find the Orders column-header row by locating the "Symbol" header cell.
-    # The data rows follow immediately below; stop ~300px down to avoid
-    # picking up the L2 panel that starts further below.
-    symbol_headers = [c for c in all_cells if c.text.lower() == "symbol"]
-    if not symbol_headers:
-        return []  # orders panel not visible
+    # Pass 1 (locate): OCR the whole window. An image this large is downscaled
+    # below the detector's limit, so small grid text — the topmost order rows in
+    # particular — drops out non-deterministically. But the lower rows that do
+    # survive are enough to locate the grid's right/bottom bounds.
+    locate_cells = _run_ocr(full, label="orders_locate")
 
-    header_y = min(c.y for c in symbol_headers)
-    orders_cells = [c for c in all_cells if header_y - 5 <= c.y <= header_y + 300]
+    # An entirely empty locate pass means PrintWindow returned a blank buffer —
+    # this happens transiently when FT+ is initialising or its GPU compositor
+    # hasn't rendered a frame yet.  Raise so with_retry fires rather than
+    # silently returning [] and masking the transient failure.
+    if not locate_cells:
+        raise RuntimeError(
+            "OCR locate pass returned no cells — "
+            "capture buffer may be blank (FT+ initialising or GPU flush pending)"
+        )
 
-    rows = _cluster_rows(orders_cells)
+    box = _orders_crop_box(locate_cells, img_w, img_h)
+
+    if box is None:
+        # OCR ran and found text, but no order-id-shaped cells in the grid
+        # x-band — treat as a valid empty grid (no orders placed yet).
+        grid_cells = [c for c in locate_cells if c.x < _ORDERS_GRID_MAX_X]
+        return _parse_orders_from_rows(_cluster_rows(grid_cells))
+
+    # Pass 2 (read): crop to the panel so its (small) text gets the full detector
+    # budget at native resolution — every row, including the top of the grid, now
+    # detects. The crop origin's x is 0, so its column x-coords already match the
+    # full image; only y is offset back for clustering/debug consistency.
+    x0, y0, x1, y1 = box
+    crop = full[y0:y1, x0:x1]
+    crop_cells = _run_ocr(crop, label="orders_crop")
+    cells = [_Cell(c.x, c.y + y0, c.text) for c in crop_cells]
+
+    # Drop the right-hand L2/watchlist panel so a watchlist ticker at the same y
+    # can't merge into an order row during clustering, then pattern-parse rows.
+    grid_cells = [c for c in cells if c.x < _ORDERS_GRID_MAX_X]
+    rows = _cluster_rows(grid_cells)
     return _parse_orders_from_rows(rows)
 
 

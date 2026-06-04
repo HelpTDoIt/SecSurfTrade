@@ -54,6 +54,12 @@ class EngineConfig(BaseModel):
     polling_seconds: int = 45
     stall_threshold_seconds: int = 300
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
+    # EOD-sweep predicate inputs, shared by the live-recompute trigger (F-1)
+    # and the absorption scheduler (S-1).  sweep_time_minutes is minutes since
+    # market open (9:30 ET): 330 = 15:00 ET.  sweep_unfilled_frac is the
+    # unfilled-fraction threshold for the fill-based half of the predicate.
+    sweep_time_minutes: int = 330
+    sweep_unfilled_frac: float = 0.5
 
 
 class Inputs(BaseModel):

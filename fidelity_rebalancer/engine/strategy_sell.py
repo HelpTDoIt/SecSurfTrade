@@ -19,12 +19,14 @@ Rules (in priority order):
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
 from typing import Optional
 
 from adapters import Level2Snapshot, QuoteSnapshot
+from engine import observability
 from engine.chunker import (
     adjust_prev_close_for_exdiv,
     build_gap_capture_chunks,
@@ -32,8 +34,13 @@ from engine.chunker import (
     round_to_tick,
     tick,
 )
+from engine.decision_context import DecisionContext
+from engine.escalation import _escalate
+from engine.size_context import PositionSizeContext
 from engine.spread_context import SpreadContext
 from state.schema import ChunkRecord, SellRecord, SellStrategy
+
+_log = logging.getLogger(__name__)
 
 
 # ── ADV helper (cached per-symbol per-session) ────────────────────────────
@@ -113,7 +120,7 @@ def _spread_bullet(f: _Features) -> str:
 def _adv_bullet(f: _Features, sell: SellRecord) -> str:
     if f.pct_of_adv is None:
         return f"ADV: unknown — sizing assumes book depth alone."
-    return f"Order is {f.pct_of_adv:.2f}% of 30-day ADV ({sell.shares:.0f} sh)."
+    return f"Order is {f.pct_of_adv:.2f}% of ADV ({sell.shares:.0f} sh)."
 
 
 def _vol_bullet(f: _Features) -> str:
@@ -130,17 +137,20 @@ def _decide(
     quote: QuoteSnapshot,
     spread_ctx: Optional[SpreadContext] = None,
     market_minutes: Optional[int] = None,
+    size_ctx: Optional[PositionSizeContext] = None,
 ) -> tuple[str, str, float, list[str]]:
     """Returns (rule, urgency, limit_price, reasoning_bullets).
 
     market_minutes: minutes since market open (9:30 ET).  None = unknown.
+    size_ctx: per-class %ADV cutoffs (G-5).  None = legacy 2/5 defaults.
     """
     sc = spread_ctx or SpreadContext.default()
+    zc = size_ctx or PositionSizeContext.default()
     tight  = f.spread_bps < sc.tight_bps
     wide   = f.spread_bps > sc.wide_bps
     healthy_vol = f.rel_vol is not None and f.rel_vol > 1.0
-    small_pos   = f.pct_of_adv is not None and f.pct_of_adv < 2.0
-    large_pos   = f.pct_of_adv is not None and f.pct_of_adv > 5.0
+    small_pos   = f.pct_of_adv is not None and f.pct_of_adv < zc.sell_small_pct
+    large_pos   = f.pct_of_adv is not None and f.pct_of_adv > zc.sell_large_pct
 
     # Rule 0: opening gap capture — stock gapped up, first 30 min of trading
     gap_up = (f.day_change_pct is not None and f.day_change_pct > 0.5
@@ -175,7 +185,7 @@ def _decide(
         return ("tight_spread_large_position", "patient", limit, [
             _spread_bullet(f),
             _adv_bullet(f, sell),
-            f"Position is large (>5% ADV) — drip the order in via more chunks.",
+            f"Position is large (>{zc.sell_large_pct:g}% ADV) — drip the order in via more chunks.",
             f"LIMIT at bid ${limit:.4f} to avoid pushing the market.",
         ])
 
@@ -249,26 +259,35 @@ def generate_sell_strategy(
     l2: Level2Snapshot,
     vol5min: float,
     *,
+    ctx: DecisionContext,
     today: Optional[date] = None,
-    adv: Optional[float] = None,
     exdiv_calendar: Optional[dict] = None,
     max_pct_of_top3_depth: float = 0.25,
     max_pct_of_5min_volume: float = 0.15,
-    spread_ctx: Optional[SpreadContext] = None,
-    vwap: Optional[float] = None,
-    market_minutes: Optional[int] = None,
 ) -> tuple[SellStrategy, list[ChunkRecord]]:
     """
     Generate a sell strategy + matching chunk records for a single SellRecord.
     Returns (strategy, chunk_records).
+
+    Market inputs (adv, spread_ctx, vwap, market_minutes) arrive bundled in the
+    required ``ctx`` (engine.decision_context.DecisionContext).
     """
     today = today or date.today()
-    if adv is None:
-        adv = get_adv(sell.ticker)
 
-    feats = _features(sell, quote, today, adv, exdiv_calendar, vwap=vwap)
+    adv = ctx.adv if ctx.adv is not None else get_adv(sell.ticker)
+
+    feats = _features(sell, quote, today, adv, exdiv_calendar, vwap=ctx.vwap)
     rule, urgency, limit_price, reasoning = _decide(
-        feats, sell, quote, spread_ctx, market_minutes=market_minutes,
+        feats, sell, quote, ctx.spread_ctx, market_minutes=ctx.market_minutes,
+        size_ctx=ctx.size_ctx,
+    )
+
+    # Time-of-day urgency ramp (symmetric with buys; nudges toward the bid).
+    # gap_capture fires only in the first 30 min while escalation starts at
+    # 90 min, so the two never overlap — escalation is a no-op for gap_capture.
+    urgency, limit_price, reasoning = _escalate(
+        "sell", urgency, limit_price, reasoning, quote, feats.px_tick,
+        ctx.market_minutes,
     )
 
     if rule == "gap_capture":
@@ -300,6 +319,44 @@ def generate_sell_strategy(
             limit_price=cd["limit_price"],
             cost=cd["cost"],
         ))
+
+    # Data-quality WARNINGs (ticker is allowed at WARNING; share counts are not).
+    if adv is None:
+        _log.warning("sell %s: ADV unavailable — sizing from book depth only", sell.ticker)
+    if not (quote.bid or quote.ask):
+        _log.warning("sell %s: no live bid/ask — limit derived from fallback price", sell.ticker)
+    # rule/urgency/limit_price below are post-escalation (the entered values).
+    # Per-ticker decision detail -> DEBUG (verbose-gated) + structured record.
+    _log.debug(
+        "sell %s: rule=%s urgency=%s limit=$%.4f chunks=%d "
+        "[spread=%.1fbps rel_vol=%s pct_adv=%s day=%s]",
+        sell.ticker, rule, urgency, limit_price, len(chunks),
+        feats.spread_bps,
+        f"{feats.rel_vol:.2f}" if feats.rel_vol is not None else "n/a",
+        f"{feats.pct_of_adv:.2f}" if feats.pct_of_adv is not None else "n/a",
+        f"{feats.day_change_pct:.2f}" if feats.day_change_pct is not None else "n/a",
+    )
+    observability.record("strategy_decision", {
+        "side": "sell",
+        "account": sell.account,
+        "strategy": sell.strategy,
+        "ticker": sell.ticker,
+        "shares": sell.shares,
+        "rule": rule,
+        "urgency": urgency,
+        "limit_price": limit_price,
+        "n_chunks": len(chunks),
+        "adv": adv,
+        "features": {
+            "spread_bps": round(feats.spread_bps, 3),
+            "midpoint": feats.midpoint,
+            "rel_vol": feats.rel_vol,
+            "pct_of_adv": feats.pct_of_adv,
+            "day_change_pct": feats.day_change_pct,
+            "adj_prev_close": feats.adj_prev_close,
+            "vwap": feats.vwap,
+        },
+    })
 
     strategy = SellStrategy(
         account=sell.account,

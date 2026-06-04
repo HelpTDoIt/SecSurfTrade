@@ -146,11 +146,11 @@ def test_multiple_orders_only_stalled_flagged():
 
 
 def test_sell_requote_basic():
-    """
-    sell: original=$62.39, bid=$62.37
-    candidate bid+1tick = 62.38
-    candidate orig−5ticks = 62.34
-    max(62.38, 62.34) = 62.38
+    """F-6: re-quote re-runs rule selection on the fresh quote.
+
+    sell: bid=$62.37 ask=$62.45 → spread ≈ 12.8 bps (wide) → wide_spread rule
+    → LIMIT at bid+1 tick = $62.38.  (Same number the old ±5-tick clamp
+    produced here, but now arrived at via the pricing rules.)
     """
     stall = StallEvent(
         "s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=312
@@ -163,19 +163,20 @@ def test_sell_requote_basic():
     assert len(sugg.rationale) > 0
 
 
-def test_sell_requote_clamp_5ticks():
-    """
-    If bid has fallen far: bid=$62.00, orig=$62.39
-    candidate bid+1tick = 62.01
-    candidate orig−5ticks = 62.34
-    max(62.01, 62.34) = 62.34 — clamp wins, don't chase bid too far down
+def test_sell_requote_wide_book_reprices_to_bid_plus_tick():
+    """F-6 replaces the old ±5-tick clamp with rule selection.
+
+    A book that has gapped wide (bid=$62.00 ask=$62.50 → ≈80 bps) selects the
+    wide-spread sell rule, which prices at bid+1 tick = $62.01 to avoid
+    crossing.  (The old clamp floored this at orig−5 ticks = $62.34; the rule
+    path no longer anchors to the stale original limit.)
     """
     stall = StallEvent(
         "s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=400
     )
     quote = _quote(bid=62.00, ask=62.50)
     sugg = recommend_requote(stall, "sell", quote)
-    assert sugg.new_limit == pytest.approx(62.34)
+    assert sugg.new_limit == pytest.approx(62.01)
 
 
 def test_sell_requote_rationale_contains_limits():
@@ -193,33 +194,34 @@ def test_sell_requote_rationale_contains_limits():
 
 
 def test_buy_requote_basic():
-    """
-    buy: original=$75.50, ask=$75.53
-    candidate ask−1tick = 75.52
-    candidate orig+5ticks = 75.55
-    min(75.52, 75.55) = 75.52
+    """F-6: re-quote re-runs rule selection on the fresh quote.
+
+    buy: bid=$75.45 ask=$75.53 → spread ≈ 10.6 bps (wide) → wide_spread rule
+    → LIMIT at midpoint = $75.49.  (The old ±5-tick clamp gave ask−1 tick =
+    $75.52; the rule path splits the wide spread instead.)
     """
     stall = StallEvent(
         "b1", original_limit=75.50, filled_qty=50, remaining_qty=50, seconds_stalled=310
     )
     quote = _quote(bid=75.45, ask=75.53)
     sugg = recommend_requote(stall, "buy", quote)
-    assert sugg.new_limit == pytest.approx(75.52)
+    assert sugg.new_limit == pytest.approx(75.49)
 
 
-def test_buy_requote_clamp_5ticks():
-    """
-    If ask has jumped far: ask=$76.00, orig=$75.50
-    candidate ask−1tick = 75.99
-    candidate orig+5ticks = 75.55
-    min(75.99, 75.55) = 75.55 — clamp wins, don't chase ask too far up
+def test_buy_requote_wide_book_reprices_to_midpoint():
+    """F-6 replaces the old ±5-tick clamp with rule selection.
+
+    A book that has gapped wide (bid=$75.90 ask=$76.00 → ≈13 bps) selects the
+    wide-spread buy rule, which prices at the midpoint = $75.95 to split the
+    difference.  (The old clamp capped this at orig+5 ticks = $75.55; the rule
+    path no longer anchors to the stale original limit.)
     """
     stall = StallEvent(
         "b1", original_limit=75.50, filled_qty=50, remaining_qty=50, seconds_stalled=350
     )
     quote = _quote(bid=75.90, ask=76.00)
     sugg = recommend_requote(stall, "buy", quote)
-    assert sugg.new_limit == pytest.approx(75.55)
+    assert sugg.new_limit == pytest.approx(75.95)
 
 
 # ── MockATP.advance() ────────────────────────────────────────────────────
@@ -602,3 +604,70 @@ def test_monitor_app_renders_status(tmp_path: Path):
             assert "Test Retirement" in text
 
     asyncio.run(_run())
+
+
+# ── Step 6 (F-6): re-quote via full rule selection ────────────────────────
+# recommend_requote now re-runs the generator's rule path against the fresh
+# quote (replacing the old ±5-tick clamp); the winning rule may change.
+
+
+def test_requote_rule_changes_when_book_moves_tight_to_wide():
+    """Acceptance: the SAME stalled clip re-quotes off a different rule once the
+    book widens — tight → default(midpoint); wide → wide_spread(bid+1 tick)."""
+    stall = StallEvent(
+        "s1", original_limit=50.00, filled_qty=30, remaining_qty=25, seconds_stalled=400
+    )
+
+    # Tight book (~2 bps): no special condition → default rule prices at midpoint.
+    tight_quote = _quote(bid=50.00, ask=50.01, last=50.005)
+    tight = recommend_requote(stall, "sell", tight_quote)
+    assert tight.new_limit == pytest.approx(50.00)  # midpoint
+    assert any("default" in r for r in tight.rationale)
+
+    # Wide book (~20 bps): the wide-spread rule now wins → bid+1 tick.
+    wide_quote = _quote(bid=50.00, ask=50.10, last=50.05)
+    wide = recommend_requote(stall, "sell", wide_quote)
+    assert wide.new_limit == pytest.approx(50.01)  # bid + 1 tick
+    assert any("wide_spread" in r for r in wide.rationale)
+
+    # The point of F-6: re-pricing tracked the book, so the limits differ.
+    assert wide.new_limit != tight.new_limit
+
+
+def test_requote_rationale_carries_chosen_rule_reasoning():
+    """The suggestion's rationale includes the chosen rule's reasoning bullets
+    (e.g. the wide-spread rule's 'avoid crossing' note), not a clamp arithmetic
+    trail."""
+    stall = StallEvent(
+        "s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=400
+    )
+    quote = _quote(bid=62.00, ask=62.50)  # ~80 bps → wide_spread
+    sugg = recommend_requote(stall, "sell", quote)
+    combined = " ".join(sugg.rationale)
+    assert "wide_spread" in combined
+    assert "avoid crossing" in combined.lower()  # from the wide-spread rule
+    assert "re-ran rule selection" in combined.lower()
+
+
+def test_requote_buy_side_uses_buy_rules():
+    """A stalled BUY re-quotes off the buy rule path (wide spread → midpoint)."""
+    stall = StallEvent(
+        "b1", original_limit=100.00, filled_qty=50, remaining_qty=50, seconds_stalled=400
+    )
+    quote = _quote(bid=99.90, ask=100.10, last=100.00)  # 20 bps wide
+    sugg = recommend_requote(stall, "buy", quote)
+    assert sugg.new_limit == pytest.approx(100.00)  # midpoint
+    assert any("wide_spread" in r for r in sugg.rationale)
+
+
+def test_requote_three_arg_call_site_still_works():
+    """The live-monitor call site passes only (stall, side, quote); the added
+    generator inputs are optional so that signature keeps working."""
+    stall = StallEvent(
+        "s1", original_limit=62.39, filled_qty=30, remaining_qty=25, seconds_stalled=400
+    )
+    quote = _quote(bid=62.37, ask=62.45)
+    sugg = recommend_requote(stall, "sell", quote)  # positional 3-arg form
+    assert sugg.chunk_id == "s1"
+    assert sugg.remaining_qty == pytest.approx(25.0)
+    assert sugg.new_limit == pytest.approx(62.38)

@@ -13,6 +13,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from adapters import Level, Level2Snapshot, QuoteSnapshot
+from engine.decision_context import DecisionContext
 from engine.strategy_buy import generate_buy_strategy
 from engine.strategy_sell import generate_sell_strategy
 from state.schema import BuyAllocationRecord, ChunkRecord, SellRecord
@@ -83,7 +84,7 @@ def test_sell_tight_spread_small_position():
         book,
         vol5min=500_000.0,
         today=date(2026, 4, 15),
-        adv=100_000_000,  # 1% ADV
+        ctx=DecisionContext(adv=100_000_000),  # 1% ADV
     )
     assert strat.rule == "tight_spread_small_position"
     assert strat.urgency == "normal"
@@ -113,7 +114,7 @@ def test_sell_tight_spread_large_position():
         book,
         vol5min=500_000.0,
         today=date(2026, 4, 15),
-        adv=100_000_000,  # 6% ADV
+        ctx=DecisionContext(adv=100_000_000),  # 6% ADV
     )
     assert strat.rule == "tight_spread_large_position"
     assert strat.urgency == "patient"
@@ -141,7 +142,7 @@ def test_sell_wide_spread():
         book,
         vol5min=10_000.0,
         today=date(2026, 4, 15),
-        adv=100_000,
+        ctx=DecisionContext(adv=100_000),
     )
     assert strat.rule == "wide_spread"
     assert strat.urgency == "patient"
@@ -170,7 +171,7 @@ def test_sell_down_day():
         book,
         vol5min=20_000.0,
         today=date(2026, 4, 15),
-        adv=1_000_000,
+        ctx=DecisionContext(adv=1_000_000),
     )
     assert strat.rule == "down_day"
     assert strat.urgency == "patient"
@@ -198,7 +199,7 @@ def test_sell_up_day():
         book,
         vol5min=20_000.0,
         today=date(2026, 4, 15),
-        adv=1_000_000,
+        ctx=DecisionContext(adv=1_000_000),
     )
     assert strat.rule == "up_day"
     assert strat.urgency == "aggressive"
@@ -226,7 +227,7 @@ def test_sell_default_midpoint():
         book,
         vol5min=20_000.0,
         today=date(2026, 4, 15),
-        adv=1_000_000,
+        ctx=DecisionContext(adv=1_000_000),
     )
     assert strat.rule == "default"
     assert strat.urgency == "normal"
@@ -261,7 +262,7 @@ def test_buy_tight_spread_good_volume():
         quote,
         book,
         vol5min=500_000.0,
-        adv=100_000_000,
+        ctx=DecisionContext(adv=100_000_000),
     )
     assert strat.rule == "tight_spread_good_volume"
     assert strat.urgency == "normal"
@@ -291,7 +292,7 @@ def test_buy_wide_spread():
         quote,
         book,
         vol5min=10_000.0,
-        adv=1_000_000,
+        ctx=DecisionContext(adv=1_000_000),
     )
     assert strat.rule == "wide_spread"
     assert strat.urgency == "patient"
@@ -319,7 +320,7 @@ def test_buy_large_position():
         quote,
         book,
         vol5min=20_000.0,
-        adv=100_000,  # 4% ADV
+        ctx=DecisionContext(adv=100_000),  # 4% ADV
     )
     assert strat.rule == "large_position"
     assert strat.urgency == "patient"
@@ -349,7 +350,7 @@ def test_buy_default():
         quote,
         book,
         vol5min=20_000.0,
-        adv=10_000_000,  # rel_vol 0.02 (low), pct_of_adv=0.001%
+        ctx=DecisionContext(adv=10_000_000),  # rel_vol 0.02 (low), pct_of_adv=0.001%
     )
     assert strat.rule == "default"
     assert strat.urgency == "normal"
@@ -383,7 +384,7 @@ def test_strategy_round_trip_serializes_byte_identical():
         book,
         vol5min=500_000.0,
         today=date(2026, 4, 15),
-        adv=100_000_000,
+        ctx=DecisionContext(adv=100_000_000),
     )
     json1 = strat.model_dump_json()
     strat2 = type(strat).model_validate_json(json1)
@@ -564,3 +565,304 @@ def test_select_l2_symbols_all_open_within_cap():
     use, recommend = _select_l2_symbols(ranked, {"aaa", "BBB", "ccc"}, cap=7)
     assert use == ["AAA", "BBB", "CCC"]  # case-insensitive match
     assert recommend == []
+
+
+# ── Step 3 (G-4): symmetric sell urgency escalation ───────────────────────
+# Mirror of TestBuyUrgencyEscalation (tests/test_optimizations.py): the same
+# time-of-day ramp, but sells nudge the limit toward the BID (buys → ASK).
+# Direct-helper cases pin the checkpoint math; the wired case proves the ramp
+# reaches the public generator and that recorded values are post-escalation.
+
+
+class TestSellUrgencyEscalation:
+    def _q(self):
+        # bid=100.00, ask=100.02, px_tick=0.01
+        return _quote(
+            "SPY", bid=100.00, ask=100.02, last=100.01, prev_close=100.00
+        )
+
+    def test_no_escalation_before_90min(self):
+        """<90 min into the session: rule's posture/limit pass through."""
+        from engine.escalation import _escalate
+
+        urg, lim, reasoning = _escalate(
+            "sell", "patient", 100.10, [], self._q(), 0.01, market_minutes=60
+        )
+        assert urg == "patient"
+        assert lim == pytest.approx(100.10)
+        assert reasoning == []
+
+    def test_escalation_at_90min_to_normal(self):
+        """First checkpoint (90 min): patient → normal, limit 75% toward bid."""
+        from engine.escalation import _escalate
+
+        urg, lim, reasoning = _escalate(
+            "sell", "patient", 100.10, [], self._q(), 0.01, market_minutes=90
+        )
+        assert urg == "normal"
+        # 100.10 + (100.00 - 100.10) * 0.75 = 100.025 → 100.02 toward bid
+        assert lim == pytest.approx(100.02)
+        assert lim < 100.10  # nudged toward the bid
+        assert len(reasoning) == 1
+
+    def test_escalation_at_210min_to_aggressive_at_bid(self):
+        """Second checkpoint (210 min): any → aggressive, limit AT the bid."""
+        from engine.escalation import _escalate
+
+        urg, lim, _ = _escalate(
+            "sell", "patient", 100.10, [], self._q(), 0.01, market_minutes=210
+        )
+        assert urg == "aggressive"
+        assert lim == pytest.approx(100.00)  # at the bid
+
+    def test_escalation_at_330min_to_bid_minus_one_tick(self):
+        """Past the last checkpoint (330 min): aggressive, limit at bid − 1 tick."""
+        from engine.escalation import _escalate
+
+        urg, lim, reasoning = _escalate(
+            "sell", "normal", 100.10, [], self._q(), 0.01, market_minutes=330
+        )
+        assert urg == "aggressive"
+        assert lim == pytest.approx(99.99)  # bid − 1 tick
+        assert "bid" in " ".join(reasoning)
+
+    def test_no_escalation_outside_market(self):
+        """market_minutes None (outside RTH) leaves everything untouched."""
+        from engine.escalation import _escalate
+
+        urg, lim, _ = _escalate(
+            "sell", "patient", 100.10, [], self._q(), 0.01, market_minutes=None
+        )
+        assert urg == "patient"
+        assert lim == pytest.approx(100.10)
+
+    def test_already_aggressive_no_downgrade(self):
+        """An already-aggressive rule isn't downgraded at an intermediate point."""
+        from engine.escalation import _escalate
+
+        urg, lim, reasoning = _escalate(
+            "sell", "aggressive", 100.00, [], self._q(), 0.01, market_minutes=120
+        )
+        assert urg == "aggressive"
+        assert lim == pytest.approx(100.00)  # limit unchanged
+        assert reasoning == []  # no escalation bullet added
+
+    def test_escalation_wired_through_generate(self):
+        """Acceptance: a stalled-near-close sell escalates urgency + limit toward
+        the bid through the public generator; the recorded reasoning carries the
+        escalation bullet (recorded == entered values)."""
+        sell = SellRecord(
+            account="Test Retirement",
+            strategy="Strategy Alpha",
+            ticker="ABC",
+            shares=200,
+            limit_price=100.0,
+            est_proceeds=20_000,
+        )
+        # Wide spread → wide_spread rule (patient, limit at bid+1 tick = 99.91).
+        quote = _quote(
+            "ABC", bid=99.90, ask=100.10, last=100.00, prev_close=100.00, volume=50_000
+        )
+        book = _l2("ABC", [(99.90, 200)] * 3, [(100.10, 200)] * 3)
+
+        strat_early, _ = generate_sell_strategy(
+            sell, quote, book, vol5min=10_000.0, today=date(2026, 4, 15),
+            ctx=DecisionContext(adv=100_000, market_minutes=60),
+        )
+        strat_mid, _ = generate_sell_strategy(
+            sell, quote, book, vol5min=10_000.0, today=date(2026, 4, 15),
+            ctx=DecisionContext(adv=100_000, market_minutes=120),
+        )
+        strat_late, _ = generate_sell_strategy(
+            sell, quote, book, vol5min=10_000.0, today=date(2026, 4, 15),
+            ctx=DecisionContext(adv=100_000, market_minutes=350),
+        )
+
+        # Before 90 min: untouched patient baseline.
+        assert strat_early.urgency == "patient"
+        assert strat_early.limit_price == pytest.approx(99.91)
+
+        # Mid-session: escalated to normal, limit nudged toward the bid (99.90).
+        assert strat_mid.urgency == "normal"
+        assert strat_mid.limit_price == pytest.approx(99.90)
+        assert strat_mid.limit_price < strat_early.limit_price
+
+        # Near close: aggressive, limit one tick past the bid; the strategy's
+        # reasoning (what gets recorded) reflects the post-escalation state.
+        assert strat_late.urgency == "aggressive"
+        assert strat_late.limit_price == pytest.approx(99.89)
+        assert any("escalation" in b.lower() for b in strat_late.reasoning)
+
+    def test_buy_mode_matches_legacy_escalate_buy(self):
+        """Guard for the post-merge dedupe: the shared _escalate('buy', ...) is
+        behaviourally identical to strategy_buy._escalate_buy (urgency + limit +
+        bullet count) across the checkpoint boundaries, so _escalate_buy can
+        later delegate to it and be deleted."""
+        from engine.escalation import _escalate
+        from engine.strategy_buy import _escalate_buy
+
+        quote = self._q()
+        cases = [
+            ("patient", 100.00, 60),
+            ("patient", 100.00, 90),
+            ("patient", 100.00, 120),
+            ("patient", 99.90, 210),
+            ("normal", 100.00, 330),
+            ("normal", 100.00, 350),
+            ("patient", 100.00, None),
+            ("aggressive", 100.02, 120),
+        ]
+        for urg, lim, mm in cases:
+            shared = _escalate("buy", urg, lim, [], quote, 0.01, mm)
+            legacy = _escalate_buy(urg, lim, [], quote, 0.01, mm)
+            assert shared[0] == legacy[0], f"urgency mismatch at mm={mm}"
+            assert shared[1] == pytest.approx(legacy[1]), f"limit mismatch at mm={mm}"
+            assert len(shared[2]) == len(legacy[2]), f"bullet count mismatch at mm={mm}"
+
+
+# ── Step 4 (G-5): per-asset-class %ADV thresholds ─────────────────────────
+#
+# Acceptance: a leveraged ETF and a large-cap at the SAME %ADV select
+# DIFFERENT size rules.  These use the real shared _TICKER_CLASS buckets
+# (SPY=large_cap, TQQQ=leveraged) via PositionSizeContext.
+
+
+def _size_ctx(symbol: str):
+    from engine.size_context import size_context_for
+
+    return size_context_for(symbol)
+
+
+def test_sell_per_class_same_pct_adv_diverges():
+    """At 4% ADV + tight spread: large-cap (SPY) stays 'default' while a
+    leveraged ETF (TQQQ) flips to 'tight_spread_large_position'.
+
+    SPY large_cap cutoffs: small<3%, large>8% → 4% is neither.
+    TQQQ leveraged cutoffs: small<1%, large>2.5% → 4% is large.
+    """
+    # Same numeric inputs for both, only the ticker (→ asset class) differs.
+    def _run(symbol: str):
+        sell = SellRecord(
+            account="Test *0000",
+            strategy="Strategy Beta",
+            ticker=symbol,
+            shares=400,  # 4% of adv=10_000
+            limit_price=100.0,
+            est_proceeds=40_000,
+        )
+        quote = _quote(symbol, bid=99.99, ask=100.01, last=100.00,
+                       prev_close=100.00, volume=1_000_000)
+        book = _l2(symbol, [(99.99, 5000)] * 3, [(100.01, 5000)] * 3)
+        strat, _ = generate_sell_strategy(
+            sell, quote, book, vol5min=50_000.0,
+            today=date(2026, 4, 15),
+            ctx=DecisionContext(adv=10_000, size_ctx=_size_ctx(symbol)),
+        )
+        return strat.rule
+
+    spy_rule = _run("SPY")
+    tqqq_rule = _run("TQQQ")
+    assert spy_rule != tqqq_rule
+    assert spy_rule == "default"
+    assert tqqq_rule == "tight_spread_large_position"
+
+
+def test_buy_per_class_same_pct_adv_diverges():
+    """At 4% ADV (spread 7bps, low vol): large-cap (SPY) is 'default' while a
+    leveraged ETF (TQQQ) flips to 'large_position'.
+
+    SPY large_cap buy cutoff: large>5% → 4% not large.
+    TQQQ leveraged buy cutoff: large>1.5% → 4% is large.
+    """
+    def _run(symbol: str):
+        buy = BuyAllocationRecord(
+            account="Test *0000",
+            strategy="Strategy Delta",
+            ticker=symbol,
+            dollar_target=40_000,
+            limit_price=100.0,
+            share_target=400,  # 4% of adv=10_000
+            est_cost=40_000,
+        )
+        quote = _quote(symbol, bid=99.965, ask=100.035, last=100.00,
+                       prev_close=100.00, volume=200_000)
+        book = _l2(symbol, [(99.96, 500)] * 3, [(100.03, 500)] * 3)
+        strat, _ = generate_buy_strategy(
+            buy, quote, book, vol5min=20_000.0,
+            ctx=DecisionContext(adv=10_000, size_ctx=_size_ctx(symbol)),
+        )
+        return strat.rule
+
+    spy_rule = _run("SPY")
+    tqqq_rule = _run("TQQQ")
+    assert spy_rule != tqqq_rule
+    assert spy_rule == "default"
+    assert tqqq_rule == "large_position"
+
+
+def test_size_ctx_default_preserves_legacy_cutoffs():
+    """Unmapped ticker → default() → legacy 2/5 (sell), 3 (buy)."""
+    from engine.size_context import PositionSizeContext, size_context_for
+
+    d = size_context_for("ZZZ_NOT_A_TICKER")
+    assert d == PositionSizeContext.default()
+    assert d.sell_small_pct == 2.0
+    assert d.sell_large_pct == 5.0
+    assert d.buy_large_pct == 3.0
+
+
+def test_size_ctx_none_falls_back_to_legacy_in_decide():
+    """ctx.size_ctx=None must reproduce the legacy hardcoded behavior:
+    SPY at 6% ADV + tight spread → tight_spread_large_position (>5% legacy)."""
+    sell = SellRecord(
+        account="Test *0000",
+        strategy="Strategy Beta",
+        ticker="SPY",
+        shares=600,  # 6% of adv=10_000 (> legacy 5%, < per-class large_cap 8%)
+        limit_price=100.0,
+        est_proceeds=60_000,
+    )
+    quote = _quote("SPY", bid=99.99, ask=100.01, last=100.00,
+                   prev_close=100.00, volume=1_000_000)
+    book = _l2("SPY", [(99.99, 5000)] * 3, [(100.01, 5000)] * 3)
+    strat, _ = generate_sell_strategy(
+        sell, quote, book, vol5min=50_000.0,
+        today=date(2026, 4, 15),
+        ctx=DecisionContext(adv=10_000),  # size_ctx defaults to None → legacy
+    )
+    # Legacy >5% large fires; with the SPY per-class (>8%) it would NOT.
+    assert strat.rule == "tight_spread_large_position"
+
+
+def test_g6_single_adv_path_end_to_end(monkeypatch):
+    """G-6: assert ONE ADV definition flows end-to-end.
+
+    The generator must consume ctx.adv (the watchlist 10-day ADV the CLI
+    supplies) and must NOT call get_adv() (30-day yfinance fallback) when
+    ctx.adv is provided.  We poison get_adv to prove it is never reached.
+    """
+    import engine.strategy_sell as ss
+
+    def _boom(symbol):  # pragma: no cover - must never run
+        raise AssertionError("get_adv() fallback called despite ctx.adv set")
+
+    monkeypatch.setattr(ss, "get_adv", _boom)
+
+    sell = SellRecord(
+        account="Test *0000",
+        strategy="Strategy Beta",
+        ticker="SPY",
+        shares=400,
+        limit_price=100.0,
+        est_proceeds=40_000,
+    )
+    quote = _quote("SPY", bid=99.99, ask=100.01, last=100.00,
+                   prev_close=100.00, volume=1_000_000)
+    book = _l2("SPY", [(99.99, 5000)] * 3, [(100.01, 5000)] * 3)
+    strat, _ = generate_sell_strategy(
+        sell, quote, book, vol5min=50_000.0,
+        today=date(2026, 4, 15),
+        ctx=DecisionContext(adv=10_000, size_ctx=_size_ctx("SPY")),
+    )
+    # 400/10_000 = 4% of ADV → reasoning reflects the single ADV source.
+    assert any("4.00% of ADV" in b for b in strat.reasoning)

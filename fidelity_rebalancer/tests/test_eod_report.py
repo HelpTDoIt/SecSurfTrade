@@ -13,13 +13,15 @@ from pathlib import Path
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from datetime import datetime
+from datetime import date, datetime, timezone
 
 from cli.eod_report import (
     JournalSummary,
     _fmt_duration,
+    _local_date,
     _notable_line,
     _to_local_display,
+    filter_to_date,
     format_report,
     load_journal,
     summarize,
@@ -519,3 +521,82 @@ class TestUnreadableInReport:
     def test_unreadable_not_labeled_malformed(self):
         report = format_report(summarize([]), 0, unreadable=["logs/locked.jsonl"])
         assert "Malformed" not in report
+
+
+# ---------------------------------------------------------------------------
+# Time-window scoping (default: today / current session)
+# ---------------------------------------------------------------------------
+
+
+class TestFilterToDate:
+    def test_target_none_returns_all_unfiltered(self):
+        entries = [
+            _entry("2026-05-01T10:00:00+00:00", "poll"),
+            _entry("2026-06-01T10:00:00+00:00", "heartbeat"),
+        ]
+        kept, n_hidden = filter_to_date(entries, None)
+        assert kept == entries
+        assert n_hidden == 0
+
+    def test_keeps_only_matching_local_date(self):
+        # A month apart -> their LOCAL dates cannot coincide in any timezone.
+        e_may = _entry("2026-05-01T12:00:00+00:00", "poll")
+        e_jun = _entry("2026-06-01T12:00:00+00:00", "heartbeat")
+        # Derive the target via the same helper the filter uses (tz-agnostic).
+        target = _local_date(e_may["ts"])
+        kept, n_hidden = filter_to_date([e_may, e_jun], target)
+        assert kept == [e_may]
+        assert n_hidden == 1
+
+    def test_unparseable_ts_always_kept_and_not_hidden(self):
+        good = _entry("2026-05-01T12:00:00+00:00", "poll")
+        bad = _entry("garbage", "mystery_event")
+        # Use a target that excludes the parseable entry...
+        target = date(1990, 1, 1)
+        kept, n_hidden = filter_to_date([good, bad], target)
+        # ...the unparseable one survives anyway; only the dated one is hidden.
+        assert bad in kept
+        assert good not in kept
+        assert n_hidden == 1
+
+    def test_today_window_keeps_now(self):
+        now_ts = datetime.now(timezone.utc).isoformat()
+        e = _entry(now_ts, "monitor_start")
+        kept, n_hidden = filter_to_date([e], date.today())
+        assert kept == [e]
+        assert n_hidden == 0
+
+    def test_empty_entries(self):
+        kept, n_hidden = filter_to_date([], date.today())
+        assert kept == []
+        assert n_hidden == 0
+
+
+class TestWindowInReport:
+    def test_window_label_shown_in_header(self):
+        report = format_report(
+            summarize([]), 0, window_label="today (2026-06-04 local)"
+        )
+        assert "Window" in report
+        assert "today (2026-06-04 local)" in report
+
+    def test_hidden_count_and_hint_shown(self):
+        report = format_report(
+            summarize([]), 0, window_label="today (2026-06-04 local)", n_hidden=14
+        )
+        assert "Hidden" in report
+        assert "14" in report
+        assert "--since all" in report
+
+    def test_no_window_label_no_window_or_hidden_lines(self):
+        report = format_report(summarize([]), 0)
+        assert "Window" not in report
+        assert "Hidden" not in report
+
+    def test_lines_read_includes_hidden_and_malformed(self):
+        entries = [_entry("2026-05-01T10:00:00+00:00", "poll")]
+        s = summarize(entries)
+        # 1 in-window valid + 5 hidden + 2 malformed = 8 lines parsed.
+        report = format_report(s, 2, n_hidden=5)
+        assert "Lines read   : 8" in report
+        assert "Valid entries: 1" in report

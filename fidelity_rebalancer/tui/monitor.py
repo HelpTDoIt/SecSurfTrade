@@ -11,6 +11,7 @@ Key bindings: R = refresh now, Q = quit, C = confirm re-quote, I = ignore stall.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,50 @@ _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
 import argparse
+
+_log = logging.getLogger("monitor")
+
+
+def _setup_logging(log_dir: Path, verbose: bool) -> None:
+    """Configure file + optional console logging.
+
+    A log file is always created at ``log_dir/monitor.log``.  When *verbose*
+    is True (i.e. ``--test`` flag is active) the file receives DEBUG messages
+    and a second StreamHandler echoes them to stderr.  In normal operation only
+    INFO and above go to the file and nothing is printed to the console (so the
+    Textual TUI isn't polluted).
+
+    Safe to call multiple times — ``logging.basicConfig`` is idempotent after
+    the first call, but we configure handlers explicitly so re-runs in tests
+    don't accumulate duplicate handlers.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    # Remove any handlers added by a previous call (e.g. in tests)
+    root.handlers.clear()
+
+    fmt = logging.Formatter(
+        "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    fh = logging.FileHandler(log_dir / "monitor.log", encoding="utf-8")
+    fh.setFormatter(fmt)
+    fh.setLevel(logging.DEBUG)  # file always captures everything
+
+    root.setLevel(logging.DEBUG if verbose else logging.INFO)
+    root.addHandler(fh)
+
+    if verbose:
+        # Console output only in --test mode so Textual layout isn't disrupted
+        # in normal use.  Textual redirects stdout/stderr but not to the TUI
+        # content area, so these lines appear in the terminal before the TUI
+        # takes over.
+        ch = logging.StreamHandler()
+        ch.setFormatter(fmt)
+        ch.setLevel(logging.DEBUG)
+        root.addHandler(ch)
+
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -29,8 +74,16 @@ from textual.containers import Container, Vertical
 
 from cli import resolve_path
 from adapters import OrderRow, OrderStatus, QuoteSnapshot
+from engine.optimizer import recompute_buys
 from engine.stall import RequoteSuggestion, StallEvent, detect_stalls, recommend_requote
-from state.schema import ChunkRecord, PlanOutput, RebalanceState, StrategyDecision
+from engine.sweep import should_sweep
+from state.schema import (
+    BuyAllocationRecord,
+    ChunkRecord,
+    PlanOutput,
+    RebalanceState,
+    StrategyDecision,
+)
 
 
 # ── Journal ───────────────────────────────────────────────────────────────
@@ -107,6 +160,78 @@ def _actual_proceeds(
     return total
 
 
+def _market_minutes(now: datetime | None = None) -> int | None:
+    """Minutes since market open (9:30 ET), or None outside 9:30–16:00.
+
+    Mirrors ``cli/strategy.py``: a naive *local* wall-clock time is interpreted
+    as ET — there is no zoneinfo anywhere in the codebase.  Used only for the
+    EOD-sweep clock half of the recompute trigger; journaling stays on UTC.
+    """
+    now = now or datetime.now()
+    m = (now.hour - 9) * 60 + (now.minute - 30)
+    if m < 0 or m > 390:
+        return None
+    return m
+
+
+# ── Fill detection ────────────────────────────────────────────────────────
+
+
+def detect_and_log_fills(
+    new_map: dict[str, "OrderRow"],
+    last_filled: dict[str, float],
+    journal: "Journal | None",
+) -> None:
+    """Detect fill deltas between polls and write `fill` journal events.
+
+    Compares each order's current ``filled_qty`` against the value stored in
+    ``last_filled`` (mutated in-place after each call).  Any positive delta
+    triggers one ``fill`` event via ``journal.write``.
+
+    First-seen behaviour: an order first seen with ``filled_qty > 0`` emits a
+    fill event for that full amount.  Fills that occurred before the monitor
+    started are captured rather than silently dropped, yielding a complete
+    audit trail from first observation forward.
+
+    Safe to call with ``journal=None`` (no events written but ``last_filled``
+    is still updated).  This makes unit testing without a real Journal file
+    possible.
+
+    Args:
+        new_map:     {order_id: OrderRow} snapshot from the current poll.
+        last_filled: Mutable dict tracking last-seen filled_qty per order_id.
+                     Pass an empty dict on first call; it is updated in place.
+        journal:     Journal instance to receive ``fill`` events, or None.
+    """
+    for order_id, row in new_map.items():
+        prev = last_filled.get(order_id, 0.0)
+        delta = row.filled_qty - prev
+        if delta > 0:
+            _log.info(
+                "fill: %s %s %s delta=%.0f filled=%.0f/%.0f",
+                order_id,
+                row.symbol,
+                row.side,
+                delta,
+                row.filled_qty,
+                row.qty,
+            )
+            if journal is not None:
+                journal.write(
+                    "fill",
+                    {
+                        "order_id": order_id,
+                        "symbol": row.symbol,
+                        "side": row.side,
+                        "delta": delta,
+                        "filled_qty": row.filled_qty,
+                        "limit_price": row.limit_price,
+                        "status": row.status.value,
+                    },
+                )
+        last_filled[order_id] = row.filled_qty
+
+
 # ── Monitor App ───────────────────────────────────────────────────────────
 
 
@@ -156,11 +281,13 @@ class MonitorApp(App):
         poll_seconds: int = 45,
         journal: Journal | None = None,
         plans_dir: Path | None = None,
+        scan_mode: bool = False,
     ) -> None:
         super().__init__()
         self._plan = plan
         self._state = plan.state
         self._orders_adapter = orders_adapter
+        self._scan_mode = scan_mode
         self._quote_adapter = quote_adapter
         self._poll_seconds = poll_seconds
         self._journal = journal
@@ -183,6 +310,12 @@ class MonitorApp(App):
             **{ch.chunk_id: "sell" for ch in self._state.computed.sell_chunks},
             **{ch.chunk_id: "buy" for ch in self._state.computed.buy_chunks},
         }
+        # Per-order last-seen filled_qty, used to detect fill deltas between polls.
+        # An order first seen with filled_qty > 0 is treated as an immediate fill
+        # for that amount — this yields a complete trail from first observation
+        # forward rather than silently discarding pre-monitor fills.
+        self._last_filled: dict[str, float] = {}
+        self._last_poll_error: str = ""
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status-panel")
@@ -197,10 +330,16 @@ class MonitorApp(App):
     # ── Poll ─────────────────────────────────────────────────────────────
 
     def _do_poll(self) -> None:
+        _log.debug("poll start")
         try:
             rows = self._orders_adapter.get_orders()
+            self._last_poll_error = ""
+            _log.info("poll ok: %d order(s) received", len(rows))
         except Exception as exc:
-            self._log_event("poll_error", {"error": str(exc)})
+            err = str(exc)
+            self._log_event("poll_error", {"error": err})
+            self._last_poll_error = err
+            _log.error("poll error: %s", err)
             rows = []
 
         now = datetime.now(tz=timezone.utc)
@@ -213,12 +352,22 @@ class MonitorApp(App):
         for row in rows:
             new_map[row.order_id] = row
 
-        changed = new_map != self._order_map
+        # Compare only the stable, order-meaningful fields — NOT placed_at /
+        # last_update_at, which the OCR parser sets to datetime.now() on every
+        # parse and would make every poll appear "changed" even when nothing moved.
+        def _sig(m: dict) -> dict:
+            return {oid: (r.status, r.filled_qty, r.qty) for oid, r in m.items()}
+
+        changed = _sig(new_map) != _sig(self._order_map)
         if changed:
             self._log_event("poll", {"order_count": len(rows), "changed": True})
         else:
             if self._journal:
                 self._journal.poll_heartbeat()
+
+        # Detect fill deltas and write `fill` journal events BEFORE updating
+        # self._order_map so that self._last_filled reflects the prior state.
+        self._detect_and_log_fills(new_map)
 
         self._order_map = new_map
 
@@ -245,18 +394,93 @@ class MonitorApp(App):
                     },
                 )
 
-        # Check for recompute triggers
+        # Check for recompute triggers (F-1): fire once per account when its
+        # sells are all terminal (proceeds fully known) OR the EOD-sweep clock
+        # has passed (fallback — recompute on whatever proceeds are known).
+        mkt_min = _market_minutes()
         for account, sell_ids in self._sell_ids_by_account.items():
-            if account in self._recomputed_accounts:
-                continue
-            if sell_ids and _all_sells_terminal(account, new_map, sell_ids):
+            fire, reason = self._should_recompute(account, sell_ids, new_map, mkt_min)
+            if fire:
                 proceeds = _actual_proceeds(account, new_map, sell_ids)
-                self._log_event(
-                    "recompute_trigger", {"account": account, "proceeds": proceeds}
-                )
+                self._recompute_account(account, proceeds, reason)
                 self._recomputed_accounts.add(account)
 
         self._refresh_display(now)
+
+    def _should_recompute(
+        self,
+        account: str,
+        sell_ids: list[str],
+        order_map: dict[str, OrderRow],
+        mkt_minutes: int | None,
+    ) -> tuple[bool, str]:
+        """Decide whether to recompute buys for ``account`` this poll.
+
+        Returns ``(fire, reason)``.  Fires when the account's sells are all
+        terminal (proceeds fully known) OR the EOD-sweep clock has passed
+        (fallback).  Already-recomputed accounts and accounts with no sells
+        never fire.  ``unfilled_frac`` is pinned to 0.0 so only the clock half
+        of ``should_sweep`` can fire — the recompute trigger is *terminal OR
+        clock*, never fill-fraction.
+        """
+        if account in self._recomputed_accounts or not sell_ids:
+            return False, ""
+        if _all_sells_terminal(account, order_map, sell_ids):
+            return True, "all_sells_terminal"
+        cfg = self._state.inputs.config
+        if should_sweep(
+            mkt_minutes,
+            0.0,
+            sweep_time_minutes=cfg.sweep_time_minutes,
+            sweep_unfilled_frac=cfg.sweep_unfilled_frac,
+        ):
+            return True, "eod_sweep_clock"
+        return False, ""
+
+    def _recompute_account(self, account: str, proceeds: float, trigger: str) -> None:
+        """Re-run the drift allocator on realized proceeds and journal the result.
+
+        Per F-1 the revised allocations replace this account's in-memory
+        ``buy_allocations``; chunks are intentionally NOT regenerated (no
+        re-driving of order flow).  The hard rule holds: nothing is placed,
+        modified, or cancelled — this only records a revised plan for the human.
+        """
+        before = {
+            ba.strategy: ba.share_target
+            for ba in self._state.computed.buy_allocations
+            if ba.account == account
+        }
+        revised: list[BuyAllocationRecord] = recompute_buys(
+            self._state, account, proceeds
+        )
+        # Replace this account's allocations in place; leave other accounts intact.
+        self._state.computed.buy_allocations = [
+            ba for ba in self._state.computed.buy_allocations if ba.account != account
+        ] + revised
+        self._log_event(
+            "recompute_buys",
+            {
+                "account": account,
+                "trigger": trigger,
+                "proceeds": round(proceeds, 2),
+                "before": before,
+                "after": {ba.strategy: ba.share_target for ba in revised},
+                "allocations": [
+                    {
+                        "strategy": ba.strategy,
+                        "ticker": ba.ticker,
+                        "share_target": ba.share_target,
+                        "dollar_target": round(ba.dollar_target, 2),
+                        "limit_price": ba.limit_price,
+                    }
+                    for ba in revised
+                ],
+            },
+        )
+
+    def _detect_and_log_fills(self, new_map: dict[str, "OrderRow"]) -> None:
+        """Delegate to the module-level helper, updating self._last_filled in place."""
+        detect_and_log_fills(new_map, self._last_filled, self._journal)
 
     def _get_quote(self, ticker: str) -> QuoteSnapshot | None:
         if not self._quote_adapter or not ticker:
@@ -278,7 +502,45 @@ class MonitorApp(App):
             f"[R] Refresh  [Q] Quit"
         )
 
+    def _render_scan(self) -> str:
+        """Scan-mode display: raw OCR order feed, no plan-matching required."""
+        lines: list[str] = []
+        ts = datetime.now(tz=timezone.utc).strftime("%H:%M:%S UTC")
+        lines.append(f"[bold]SCAN MODE — live orders from ATP  {ts}[/bold]")
+        lines.append("─" * 72)
+        if self._last_poll_error:
+            lines.append(f"  [red]Poll error:[/red] {self._last_poll_error}")
+        if not self._order_map:
+            lines.append(
+                "  [dim]No orders detected — ensure the Orders panel is visible.[/dim]"
+            )
+        else:
+            open_first = sorted(
+                self._order_map.values(),
+                key=lambda r: (r.status != OrderStatus.Open, r.symbol),
+            )
+            for row in open_first:
+                st = row.status.value
+                pct = (row.filled_qty / row.qty * 100) if row.qty > 0 else 0.0
+                color = (
+                    "[green]"
+                    if row.status == OrderStatus.Filled
+                    else "[yellow]"
+                    if row.status == OrderStatus.Open
+                    else "[dim]"
+                )
+                close = color.replace("[", "[/").replace("bold", "") or "[/dim]"
+                lines.append(
+                    f"  {color}{row.symbol:<6} {row.side:<4}  "
+                    f"{row.filled_qty:>6.0f}/{row.qty:<6.0f}  ({pct:3.0f}%)  "
+                    f"{st:<16}  lim ${row.limit_price:.4f}  {row.order_id}{close}"
+                )
+        lines.append("─" * 72)
+        return "\n".join(lines)
+
     def _render_status(self) -> str:
+        if self._scan_mode:
+            return self._render_scan()
         lines: list[str] = []
         ts = datetime.now(tz=timezone.utc).strftime("%H:%M:%S UTC")
         lines.append(f"[bold]EXECUTION STATUS — {ts}[/bold]")
@@ -438,7 +700,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Monitor ATP fill progress for an approved trade plan"
     )
-    parser.add_argument("--plan", required=True, help="Path to approved plan JSON")
+    parser.add_argument(
+        "--plan",
+        default=None,
+        help="Path to approved plan JSON (required unless --scan is set)",
+    )
     parser.add_argument(
         "--poll-seconds",
         type=int,
@@ -451,6 +717,24 @@ def main() -> None:
         help="Use mock ATP adapter (no real ATP required)",
     )
     parser.add_argument(
+        "--scan",
+        action="store_true",
+        help=(
+            "Scan mode: poll live ATP orders without a plan file. "
+            "Displays a raw order feed and writes fill events to the journal."
+        ),
+    )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help=(
+            "Test / diagnostic mode: save a timestamped OCR screenshot on every "
+            "poll to logs/ocr_captures/ and write DEBUG-level entries to "
+            "logs/monitor.log.  Use this to verify OCR coverage without touching "
+            "any real order flow."
+        ),
+    )
+    parser.add_argument(
         "--quote-source",
         choices=["yahoo", "atp", "mock"],
         default="yahoo",
@@ -461,15 +745,63 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    plan_path = Path(resolve_path(args.plan))
-    plan = PlanOutput.model_validate_json(plan_path.read_text(encoding="utf-8"))
+    # ── Logging + OCR debug setup ─────────────────────────────────────────
+    # Anchor to the package root so logs always land in fidelity_rebalancer/logs/
+    # regardless of which directory the user invokes the monitor from.
+    log_dir = _ROOT / "logs"
+    _setup_logging(log_dir, verbose=args.test)
+    _log.info(
+        "monitor starting  scan=%s  test=%s  poll=%ds",
+        args.scan,
+        args.test,
+        args.poll_seconds,
+    )
+
+    if args.test:
+        from adapters.atp_ocr import enable_debug as _enable_ocr_debug
+
+        ocr_capture_dir = log_dir / "ocr_captures"
+        _enable_ocr_debug(save_dir=ocr_capture_dir)
+        _log.info("OCR debug images will be saved to %s", ocr_capture_dir)
+
+    if not args.scan and not args.plan:
+        parser.error("--plan is required unless --scan is set")
+
+    if args.scan:
+        # Scan mode: no plan file required; build an empty in-memory plan.
+        from datetime import timezone as _tz
+
+        from state.schema import Computed, EngineConfig, Inputs, RebalanceState
+
+        _empty_state = RebalanceState(
+            generated_at=datetime.now(tz=_tz.utc),
+            generator="engine",
+            inputs=Inputs(accounts=[], signals=[]),
+            computed=Computed(
+                cash_ok={},
+                one_share_total={},
+                sells=[],
+                buy_allocations=[],
+                sell_chunks=[],
+                buy_chunks=[],
+            ),
+        )
+        plan = PlanOutput(
+            generated_at=_empty_state.generated_at,
+            state=_empty_state,
+            decisions=[],
+        )
+        plan_path = None
+    else:
+        plan_path = Path(resolve_path(args.plan))
+        plan = PlanOutput.model_validate_json(plan_path.read_text(encoding="utf-8"))
 
     poll_seconds = args.poll_seconds
     config_seconds = plan.state.inputs.config.polling_seconds
     if config_seconds and not args.poll_seconds:
         poll_seconds = config_seconds
 
-    # Orders adapter (what the monitor polls for fill progress).
+    # Orders adapter: UIA → OCR → MockATP fallback chain.
     if args.mock:
         from adapters.mock_atp import MockATP
 
@@ -480,9 +812,14 @@ def main() -> None:
 
             adapter = ATPOrdersAdapter()
         except Exception:
-            from adapters.mock_atp import MockATP
+            try:
+                from adapters.atp_ocr import OCROrdersAdapter
 
-            adapter = MockATP()
+                adapter = OCROrdersAdapter()
+            except Exception:
+                from adapters.mock_atp import MockATP
+
+                adapter = MockATP()
 
     # Quote adapter (live prices the stall advisor uses to propose new limits).
     # Without this, _get_quote() always returns None and recommend_requote()
@@ -510,13 +847,14 @@ def main() -> None:
         except Exception:
             quote_adapter = None
 
-    journal_path = Path("logs") / "journal.jsonl"
+    journal_path = log_dir / "journal.jsonl"  # log_dir is already _ROOT / "logs"
     journal = Journal(journal_path)
     journal.write(
-        "monitor_start", {"plan": str(plan_path), "poll_seconds": poll_seconds}
+        "monitor_start",
+        {"plan": str(plan_path) if plan_path else "scan", "poll_seconds": poll_seconds},
     )
 
-    plans_dir = plan_path.parent
+    plans_dir = plan_path.parent if plan_path else _ROOT / "plans"
     app = MonitorApp(
         plan=plan,
         orders_adapter=adapter,
@@ -524,6 +862,7 @@ def main() -> None:
         poll_seconds=poll_seconds,
         journal=journal,
         plans_dir=plans_dir,
+        scan_mode=args.scan,
     )
     app.run()
 

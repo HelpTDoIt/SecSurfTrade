@@ -2,16 +2,16 @@
 
 ## Goals
 
-**Today's interim end state.** A Python _recommendation engine + monitoring component_ that reads from ATP (Active Trader Pro) and Fidelity CSV exports, generates trade strategies with full reasoning, presents them via a terminal UI for human approval, and monitors order status in a live polling loop. **The app does not place orders.** The human enters every order manually in ATP. The engine output is validated against the existing React rebalance calculator via a shared JSON state file (calculator-in-the-loop parity testing).
+A Python _recommendation engine + monitoring component_ that reads from ATP (Active Trader Pro) and Fidelity CSV exports, generates trade strategies with full reasoning, presents them via a terminal UI for human approval, and monitors order status in a live polling loop. **The app does not place, modify, or cancel orders.** The human enters every order manually in ATP. The engine output is validated against the existing React rebalance calculator via a shared JSON state file (calculator-in-the-loop parity testing).
 
-**Future end state.** The same engine and monitor, with the _execution backend_ swappable from "manual entry" → "ATP pre-fill, human submits" (Phase B) → "ATP full automation with kill switch" (Phase C). Engine code does not change between phases. The execution adapter interface is what changes.
+> This document describes the system **as it is built today**. The forward-looking view — the swappable execution backend (Phase B pre-fill, Phase C full automation, engine code unchanged) and the build status of the original six chunks — lives in `docs/dev/09_roadmap.md` (sections **Foundation (shipped)** and **E. Future / Phase B+**).
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    ENGINE (pure, no I/O)                    │
-│  calculator → optimizer → strategy_gen → chunker → stall    │
+│  calculator → optimizer → strategy → chunker → stall/sweep  │
 └──────────────▲──────────────────────────▲───────────────────┘
                │                          │
         reads from                  writes via
@@ -51,72 +51,77 @@ fidelity_rebalancer/
 ├── accounts.json               # gitignored — your real account names, types, allocations
 ├── accounts.example.json       # committed template with placeholder names
 ├── 00_ARCHITECTURE.md          # this doc (lives at project root, not inside fidelity_rebalancer/)
-├── engine/                     # pure logic, no I/O
-│   ├── calculator.py           # port of React calcTrades / allocBuys
-│   ├── optimizer.py            # drift-minimizing allocator (proportional + greedy)
-│   ├── chunker.py              # book-relative chunking, ex-div check
-│   ├── strategy_sell.py        # sell-side reasoning generator
-│   ├── strategy_buy.py         # buy-side reasoning generator
-│   └── stall.py                # stall detection + re-quote suggestion rules
+├── engine/                     # pure logic, no I/O (except observability.py)
+│   ├── calculator.py           # port of React calcTrades / allocBuys (sells, buys, cash gate)
+│   ├── optimizer.py            # drift-minimizing buy allocator; recompute_buys (F-1) for the monitor
+│   ├── chunker.py              # book-relative / POV / gap-capture / legacy chunkers; tick + ex-div
+│   ├── strategy_sell.py        # sell-side rule selection + reasoning (rules 0–7 + default)
+│   ├── strategy_buy.py         # buy-side rule selection + reasoning (rules 1–5 + default)
+│   ├── escalation.py           # side-aware time-of-day urgency ramp (G-4)
+│   ├── decision_context.py     # per-decision market-input bundle (DecisionContext)
+│   ├── spread_context.py       # per-symbol spread thresholds (tight / wide)
+│   ├── size_context.py         # per-asset-class %ADV cutoffs (G-5 / G-6)
+│   ├── vwap.py                 # pure intraday VWAP math (G-3)
+│   ├── sweep.py                # EOD-sweep predicate: clock OR unfilled-fraction (F-1 / S-1)
+│   ├── stall.py                # stall detection + re-quote via full rule selection (F-6)
+│   └── observability.py        # stdlib logging setup + decisions.jsonl (only I/O-bearing engine module)
 ├── state/
-│   ├── schema.py               # Pydantic models for the state JSON
-│   ├── importer.py             # state JSON ↔ React calc export adapter
+│   ├── schema.py               # Pydantic v2 models for the state JSON
+│   ├── importer.py             # load/save state JSON ↔ React calc export
 │   └── compare.py              # diff engine output vs calc export
-├── adapters/
+├── adapters/                   # every I/O concern behind an interface
 │   ├── csv_reader.py           # Fidelity CSV → portfolio
-│   ├── atp_quote.py            # pywinauto: read bid / ask / last
-│   ├── atp_level2.py           # pywinauto: read L2 depth-of-book
-│   ├── atp_orders.py           # pywinauto: read Orders panel
-│   ├── atp_ocr.py              # OCR fallback for L2 (Telerik MAUI blocks UIA)
+│   ├── atp_quote.py            # UIA: bid / ask / last
+│   ├── atp_level2.py           # UIA: L2 depth-of-book
+│   ├── atp_orders.py           # Orders panel (UIA blocked by Telerik MAUI → OCR is the live path)
+│   ├── atp_ocr.py              # RapidOCR reader for L2 / Orders / Watchlist (the working fallback)
 │   ├── atp_vision.py           # vision-based L2 reader (screen capture)
-│   ├── atp_watchlist.py        # ATP watchlist scraper
+│   ├── atp_watchlist.py        # ATP Watchlist OCR: quote, prev_close, 10-day ADV, VWAP, ex-div
 │   ├── fatp_connect.py         # Fidelity ATP connection helper
 │   ├── fatp_watchlist.py       # Fidelity watchlist adapter
-│   ├── _atp_connect.py         # internal: pywinauto setup and caching
+│   ├── yfinance_fallback.py    # off-ATP path: quotes, ADV, approx intraday VWAP
+│   ├── mock_atp.py             # in-memory simulator for tests
+│   ├── _atp_connect.py         # internal: connect + 3× retry helper
 │   ├── _atp_parse.py           # internal: numeric parsing helpers
-│   ├── _atp_ui.py              # internal: UIA navigation helpers
-│   ├── yfinance_fallback.py    # quote fallback for off-hours testing
-│   └── mock_atp.py             # in-memory simulator for tests
+│   └── _atp_ui.py              # internal: UIA navigation helpers
 │
-│   NOTE: The OCR/vision adapters and internal helpers were added because
-│   ATP's Level II and Orders panels use Telerik MAUI RadMauiScrollView
-│   controls that block UIA element access. UIA is used where it works;
-│   OCR screen-capture is the automatic fallback.
+│   NOTE: the OCR/vision adapters exist because ATP's Level II and Orders panels
+│   use Telerik MAUI RadMauiScrollView controls that block UIA element access.
+│   UIA is used where it works; RapidOCR screen-capture is the automatic fallback.
 ├── tui/
 │   ├── app.py                  # Textual entry point
 │   ├── presenter.py            # plan approval screens
-│   └── monitor.py              # live order monitor view + stall alerts
+│   └── monitor.py              # live order monitor + stall alerts + journal.jsonl writer
 ├── preflight/                  # morning readiness gate (pure decision logic + interactive shell)
 │   ├── checks.py               # FT+-running + ticker-presence (Watchlist / L2) checks
 │   ├── planner.py              # L2-window plan for thin tickers against the window cap
-│   ├── sanity.py               # pre-trade sanity findings (RED / YELLOW / GREEN)
-│   └── orchestrator.py         # readiness evaluation, sizing-command builder, outcome classifier
+│   ├── sanity.py               # pre-trade sanity findings (RED / YELLOW / GREEN), account-type-aware
+│   └── orchestrator.py         # readiness eval, sizing-command builder, outcome classifier
 ├── cli/
 │   ├── compute.py              # python -m cli.compute --inputs ... --export state.json
 │   ├── strategy.py             # python -m cli.strategy --state state.json --export state.json
 │   ├── preflight.py            # python -m cli.preflight --state state.json (readiness -> sizing -> sanity)
 │   ├── progress.py             # python -m cli.progress --state state.json (buy fill vs. time-elapsed pace)
-│   ├── eod_report.py           # python -m cli.eod_report --journal logs/journal*.jsonl (post-session summary)
+│   ├── eod_report.py           # python -m cli.eod_report [--since today|all|YYYY-MM-DD] (post-session summary, today by default)
 │   └── compare.py              # python -m cli.compare --engine state.json --calc calc_export.json
-│                               #   --engine: path to engine output JSON (from cli.compute)
-│                               #   --calc:   path to React calc export JSON (from Export State button)
 │
-│   NOTE: strategy generation was split into a separate CLI pass. compute.py
-│   produces sells/buys/chunks from CSVs alone (no live data needed). strategy.py
-│   then fetches live quotes and embeds limit prices + reasoning bullets into the
-│   same state file. This keeps the pure engine logic independent of live market reads.
-├── tests/
-│   ├── fixtures/               # Feb 27 test data, mock L2 books, calc exports
-│   ├── test_calculator.py
-│   ├── test_optimizer.py
-│   ├── test_chunker.py
-│   ├── test_strategy.py
-│   ├── test_stall.py
-│   ├── test_compare.py
-│   ├── test_presenter.py       # TUI approval screen unit tests
-│   └── test_atp_adapters.py    # OCR/UIA adapter tests (uses mock ATP)
-└── logs/
-    └── journal.jsonl           # append-only audit log of session events
+│   NOTE: strategy generation is a separate CLI pass. compute.py produces
+│   sells/buys/chunks from CSVs alone (no live data); strategy.py then fetches
+│   live quotes and embeds limit prices + reasoning into the same state file.
+│   This keeps the pure engine logic independent of live market reads.
+├── tests/                      # pytest; run from fidelity_rebalancer/ with PYTHONPATH=.
+│   ├── fixtures/               # regression data, mock L2 books, calc exports
+│   ├── test_calculator.py · test_optimizer.py · test_optimizations.py
+│   ├── test_chunker.py · test_strategy.py · test_stall.py · test_sweep.py
+│   ├── test_vwap.py · test_decision_context.py · test_compare.py
+│   ├── test_presenter.py · test_atp_adapters.py · test_atp_ocr_orders.py
+│   ├── test_monitor_fills.py · test_monitor_recompute.py · test_monitor_e2e.py
+│   ├── test_observability.py · test_eod_report.py · test_strict_atp.py
+│   └── test_preflight_{checks,planner,sanity,orchestrator,cli}.py
+└── logs/                       # gitignored
+    ├── journal.jsonl           # monitor: append-only session/fill audit log
+    ├── strategy.log            # engine: leveled run log (INFO; DEBUG with -v)
+    └── decisions.jsonl         # engine: structured per-ticker decision trail
 ```
 
 ## State JSON schema (high level)
@@ -134,6 +139,7 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
       {
         "name": "My Retirement",
         "type": "retirement",
+        "margin": false,
         "cash_reserve": 0,
         "positions": [
           {
@@ -145,6 +151,7 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
           }
         ],
         "cash_spaxx": 33.88,
+        "pending_activity": 0.0,
         "strategy_allocations": {
           "Strategy Alpha": 0.2,
           "World Try -Top": 0.25
@@ -166,7 +173,9 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
       "chunker": {
         "max_pct_of_top3_depth": 0.25,
         "max_pct_of_5min_volume": 0.15
-      }
+      },
+      "sweep_time_minutes": 330,
+      "sweep_unfilled_frac": 0.5
     }
   },
 
@@ -219,18 +228,21 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
 
 | Library   | Version | Used for                                           |
 | --------- | ------- | -------------------------------------------------- |
-| Python    | 3.12+   | language                                           |
-| pywinauto | 0.6.8+  | ATP UIA scraping (read-only today)                 |
+| Python    | 3.12+   | language (developed and run on 3.14)               |
 | pydantic  | 2.6+    | state JSON schema validation                       |
-| pandas    | 2.2+    | CSV parsing, drift math                            |
 | textual   | 0.50+   | terminal UI (approval + monitor)                   |
 | rich      | 13.7+   | text formatting                                    |
-| loguru    | 0.7+    | structured logging to journal.jsonl                |
-| yfinance  | 0.2.36+ | quote fallback for off-hours dev/testing only      |
+| yfinance  | 0.2.36+ | off-ATP quotes / 10-day ADV / approximate VWAP     |
+| pandas    | 2.2+    | yfinance DataFrames (ADV / realized-vol math)      |
+| numpy     | —       | realized-vol math + OCR pixel arrays               |
+| rapidocr-onnxruntime + Pillow | — | OCR of ATP L2 / Orders / Watchlist (Telerik MAUI blocks UIA) |
+| pywinauto | 0.6.8+  | ATP UIA scraping where it works (read-only)        |
 | keyring   | 24+     | OS credential storage (Windows Credential Manager) |
 | pytest    | latest  | test runner                                        |
 
-**Language**: Python 3.12+ throughout. No build step for the React calculator (continues to use CDN-hosted React/ReactDOM/Babel as today).
+**Logging** uses the Python **stdlib `logging`** module via `engine/observability.py` (leveled `logs/strategy.log` + structured `logs/decisions.jsonl`); the live monitor writes `logs/journal.jsonl`. `loguru` is still declared in `pyproject.toml` but is no longer imported.
+
+**Language**: Python 3.12+ (the OCR stack needs 3.14-compatible wheels, so the project is run on 3.14). No build step for the React calculator (CDN-hosted React/ReactDOM/Babel as today).
 
 ## Key constraints
 
@@ -241,39 +253,203 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
 5. **Rate limit (Phase B/C only).** When write automation is added, cap at <2 orders/min to avoid Fidelity abuse-detection triggers.
 6. **Calculator parity is gating.** Before the engine is trusted, it must produce byte-identical `computed` output to the React calculator on the Feb 27 regression fixture and at least one live snapshot.
 
-## Order chunking rule
+## Order rules
 
-The original $100K dollar-based chunking rule is replaced with **book-relative chunking**:
+This is the human-followable account of **how an order's size, its lots
+(chunks), its limit price, and its timing are decided** — for both buys and
+sells, across taxable and retirement accounts. Plain English first, then the
+math. Backlog items that would change a rule are tagged inline by ID (see
+`docs/dev/09_roadmap.md`).
 
-- `max_chunk_shares = min( max_pct_of_top3_depth × sum_of_top3_levels_at_side, max_pct_of_5min_volume × trailing_5min_volume )`
-- Default `max_pct_of_top3_depth = 0.25`, `max_pct_of_5min_volume = 0.15`. Both configurable.
-- Chunk shares rounded down to nearest 100 (even-lot preference).
-- For a liquid ETF (IEF, JAAA): the formula naturally yields one big chunk. For a thin ETF (JMAC, JSMD, MNA): yields several small chunks.
-- Liquidity tiers from the third-party review are **emergent from the formula**, not hardcoded thresholds.
+### Inputs — where every number comes from
 
-**Sequential iceberg.** Chunks for the same symbol fire sequentially, not on a time schedule. Clip N+1 must wait for clip N to reach `Filled` before being placed. If clip N is `PartiallyFilled` and stalls (see below), the monitor surfaces a re-quote suggestion before continuing.
+| Input | Source | Feeds |
+| --- | --- | --- |
+| Positions, SPAXX cash, pending activity | Fidelity CSV → `adapters/csv_reader.py` → `engine/calculator.py` | sizing (shares/dollars), cash gate |
+| Account type / margin / cash reserve / target weights | `accounts.json` | account-type gating, allocation |
+| Signals (current → new ticker per strategy) + prev closes | `signals.json` | what to sell/buy, limit basis |
+| Live bid / ask / last / volume / prev_close / VWAP / **10-day ADV** | ATP Watchlist OCR (`--source atp`) or yfinance (`--source yfinance`) | price rules, %ADV sizing |
+| Level 2 depth (top-of-book ladders) | ATP OCR (`--l2-symbols`) | book-relative lots |
+| Realized volatility (σ, daily bps) | yfinance daily closes (`cli/strategy.py::_realized_vol_bps`) | POV impact estimate |
+| Minutes since 9:30 ET open (clock) | wall clock (`cli/strategy.py`) | gap-capture, escalation, sweep |
 
-**Ex-dividend check.** On the 1st of any month, the chunker checks each ticker for an ex-dividend event today. If found, the limit-price basis substitutes `prev_close - dividend_amount` for `prev_close`. This prevents the calculator from sizing sells against a stale price.
+**One ADV definition end-to-end (G-6):** `%ADV = order shares ÷ 10-day ADV × 100`.
+The 30-day yfinance `get_adv()` is only an in-generator fallback when no
+watchlist row exists.
 
-## Stall detection and re-quote suggestion
+### Flow — two passes over one state file
 
-A clip is **stalled** when:
+1. **Allocation pass — `cli.compute` (no live data).** From CSVs + signals,
+   `engine/calculator.py` decides *what* trades and *how much*: which strategies
+   are trading vs holding, the dollar/share target of each sell and buy, and the
+   per-account cash gate. Output: `sells`, `buy_allocations`, placeholder chunks,
+   `cash_ok`.
+2. **Pricing pass — `cli.strategy` (live data).** For each sell/buy,
+   `engine/strategy_sell.py` / `strategy_buy.py` pick a **rule** → a **limit
+   price** and **urgency**; the **chunker** splits the order into **lots**;
+   `engine/escalation.py` ramps urgency by time of day; records are reconciled
+   down to their chunks (the chunks are what a human actually enters).
 
-- status is `PartiallyFilled`
-- AND `now - last_progress_at >= stall_threshold_seconds` (default 300s / 5 min)
+Human-in-the-loop throughout: the app emits a plan; the human enters every order
+in ATP. It never places, modifies, or cancels (hard rule).
 
-When stalled, the monitor displays:
+### Sizing — how many shares / dollars (allocation pass)
 
-- the original limit and the current bid/ask/spread
-- the recommended new limit (sell side: bid+1¢ at the new bid; buy side: ask−1¢ at the new ask)
-- the remaining shares
-- a one-keystroke "mark cancelled and re-quoted" action that updates state and creates a new chunk record
+Plain English:
+- Free cash = settled SPAXX **plus** pending activity, minus your cash reserve;
+  never negative.
+- The pool to redeploy = the value of the strategies that are changing **plus**
+  that free cash.
+- A strategy whose signal changed is **trading** → sell the whole current
+  position. A strategy whose signal is unchanged is **holding** → only top it up
+  toward target weight if cash allows.
+- Spread the available money (sale proceeds + free cash) across the new buys by
+  target weight. If the buys add up to more than the money available, scale them
+  all down by the same ratio so the plan never spends money you don't have.
+- Shares = floor(dollars ÷ limit price) — whole shares only.
 
-The human cancels and re-enters in ATP manually. The app records the action and resumes monitoring.
+Math (`engine/calculator.py::calc_trades` / `_alloc_buys`):
+```
+effective_cash = SPAXX_value + pending_activity
+depl_cash      = max(0, effective_cash − cash_reserve)
+total_pool     = Σ(value of trading-strategy positions) + depl_cash
+avail          = Σ(sell est_proceeds) + depl_cash
 
-## Polling cadence
+sells:  full position of every trading strategy (qty > 0); limit basis = prev_close
+buys:   per strategy, dollar_target = weight × total_pool  (holding: minus current
+        value), assigned greedily up to (avail − spent)
+scale:  if Σ dollar_target > avail:  dollar_target ×= avail / Σ dollar_target
+shares: floor(dollar_target / limit_price)
+```
 
-The monitor polls ATP Orders every **30–60 seconds** (configurable, default 45s). The original 5-minute interval is too slow for thin ETFs where bids walk away in seconds. Quote/L2 reads are on-demand, not continuous.
+### Account types — taxable vs retirement vs margin
+
+Plain English:
+- The cash gate (`cash_ok`) is the same arithmetic for every account: is the free
+  cash bigger than one share of each strategy's ETF? If not, the buys lean on
+  **today's** unsettled sale proceeds.
+- What differs is the **warning**, not the math:
+  - **Margin (taxable):** no warning — same-session buy+sell is funded by buying
+    power, not settled cash. The `CASH_NOT_OK` finding is suppressed.
+  - **Retirement / IRA:** soft warning that this is the **expected** timing gap —
+    buys funded by today's not-yet-settled sells. Confirm coverage (or pass
+    `--confirmed-proceeds`).
+  - **Cash (non-margin taxable):** genuine shortfall — wait for settlement or trim
+    the buys.
+- Settlement timing is sell-before-buy: `--confirmed-proceeds` rescales each
+  account's buy budget to the *actual* realized proceeds.
+
+Math / gate (`engine/calculator.py`, `preflight/sanity.py`):
+```
+cash_ok = depl_cash > Σ(one_share_price per strategy)
+CASH_NOT_OK (YELLOW) raised only when cash_ok is False AND account is not margin:
+    margin       → suppressed
+    retirement   → "expected IRA timing gap" wording
+    cash account → "genuine shortfall" wording
+```
+Backlog: **B-7** — the scale-down still caps buys at `proceeds + cash`
+*regardless of margin*, so a margin account can under-buy vs true buying power;
+loosening needs a parsed buying-power number. **A / S-1** — account-type +
+settlement gating becomes phase-aware (`funded_by` = proceeds/cash/buying_power)
+when the scheduler is absorbed into the engine.
+
+### Lots — how each order is split into chunks (pricing pass)
+
+Plain English — pick the smallest "fingerprint" the book can absorb:
+- **Book-relative (default, when L2 depth is present):** each clip is the smaller
+  of a quarter of visible top-3 depth and 15% of the last 5 minutes' volume,
+  rounded down to a round lot (100), never below 100.
+- **POV fallback (no L2):** size from %ADV via a square-root impact model; tiny
+  orders go as one invisible clip, bigger ones split into more clips with ±15%
+  jitter so the pattern isn't obvious.
+- **Gap-capture (sell only, first 30 min after a gap-up):** three phases — grab
+  the gap, then standard, then sweep.
+- **Legacy $100K dollar chunker:** the compute-pass placeholder used before live
+  prices exist.
+- Clips for one symbol are entered **largest-first**, sequentially (iceberg) —
+  clip N+1 waits for clip N to fill.
+
+Math (`engine/chunker.py`):
+```
+book-relative:
+    max_chunk = min(0.25 × Σtop-3 depth, 0.15 × vol_5min) → floor to 100, min 100
+    vol_5min  = (10-day ADV ÷ 78 five-minute slices) × volume-profile multiplier
+                open 1.8× · mid-morning 1.1× · lunch 0.6× · afternoon 1.2× · close 1.5×
+POV (build_chunks_pov):
+    impact_bps = 0.5 × σ × √(Q / ADV)            # square-root law, σ default 100 bps
+    tiers by %ADV: <1% invisible · <5% standard · <10% aggressive · else market_moving
+    chunk count: ceil(pov) → 1.5× → 2× by tier; sells +1; ±15% jitter; round 100; cap 20
+gap-capture: 30% / 50% / 20% across gap / standard / sweep prices
+tick: $0.0001 if price < $1 else $0.01
+```
+Large buys (rule 3) halve the depth cap (0.25 → 0.125) for smaller clips.
+**Ex-dividend (chunker):** on the 1st of any month, if a ticker goes ex-div
+today the sell's limit basis substitutes `prev_close − dividend` for `prev_close`
+so sizing isn't against a stale price.
+
+### Price & urgency — the rule ladders (first match wins)
+
+**Sells** (`engine/strategy_sell.py`; prev_close ex-div-adjusted on the 1st):
+
+| # | Condition (plain) | Limit | Urgency |
+| --- | --- | --- | --- |
+| 0 | Gapped up > 0.5% in first 30 min | 3-phase gap capture | aggressive |
+| 1 | Tight spread + volume + small (< %ADV) | midpoint | normal |
+| 2 | Tight spread + large (> %ADV) | bid (drip in) | patient |
+| 3 | Wide spread | bid + 1 tick | patient |
+| 4 | Down day (< −2% vs prev close) | prev_close × 0.99 | patient |
+| 5 | Up day (> +2%) | bid (sell into strength) | aggressive |
+| 6 | Above VWAP | last | aggressive |
+| 7 | Below VWAP | bid + 1 tick | patient |
+| — | default | midpoint | normal |
+
+**Buys** (`engine/strategy_buy.py`):
+
+| # | Condition (plain) | Limit | Urgency |
+| --- | --- | --- | --- |
+| 1 | Tight spread + volume | ask | normal |
+| 2 | Wide spread | midpoint | patient |
+| 3 | Large (> %ADV) | ask − 1 tick, ½ depth cap | patient |
+| 4 | Below VWAP (favorable) | ask | normal |
+| 5 | Above VWAP (paying up) | midpoint | patient |
+| — | default | ask | normal |
+
+Thresholds are per-symbol, not hardcoded:
+- **Spread** tight / wide = 0.7× / 1.5× the symbol's typical spread
+  (`engine/spread_context.py`); live bid/ask preferred, else asset-class typical
+  (large_cap ~3 bps … leveraged ~20 bps).
+- **%ADV** small/large cutoffs by asset class (**G-5 / G-6**,
+  `engine/size_context.py`): e.g. large_cap sell 3/8 buy 5; leveraged 1/2.5 buy
+  1.5; unknown tickers keep the legacy 2/5 sell, 3 buy.
+- **VWAP** rules (sell 6/7, buy 4/5) need a VWAP: exact on ATP, approximate from
+  1-min bars on yfinance (**G-3**, `engine/vwap.py`).
+
+### Timing & lifecycle
+
+- **Intraday urgency ramp** (`engine/escalation.py`, symmetric buy/sell **G-4**),
+  minutes since the 9:30 open:
+  - 0–90: use the rule's urgency as-is.
+  - 90–210: → normal; nudge the limit 75% toward the touch (buy→ask, sell→bid).
+  - 210–330: → aggressive; limit at the touch.
+  - 330+ (after 3:00): one tick **past** the touch to force a same-day fill.
+- **EOD sweep predicate** (`engine/sweep.py`): act when the clock reaches the
+  sweep cutoff (default 330 min = 15:00 ET) **or** the unfilled fraction crosses
+  its threshold (default 0.5). Used by the live recompute (**F-1**, clock-only)
+  and, later, scheduler absorption (**A / S-1**, fill-aware).
+- **Live recompute** (`engine/optimizer.py::recompute_buys`, **F-1**): when sells
+  go terminal or the clock fires, buy allocations are recomputed from *realized*
+  proceeds — still a plan; no orders placed.
+- **Monitor polling & stall/re-quote** (`tui/monitor.py`, `engine/stall.py`): ATP
+  Orders polled every ~45 s (configurable; the old 5-min interval was too slow
+  for thin ETFs). A clip is **stalled** when `PartiallyFilled` and
+  `now − last_progress_at ≥ stall_threshold` (default 300 s); the monitor then
+  re-runs **full rule selection** on the remaining shares (**F-6 / Step 6**) — not
+  a fixed bid+1¢ — and offers a one-key "cancel + re-quote" that the human
+  performs in ATP.
+
+Reasoning bullets for every decision are recorded to `logs/decisions.jsonl` and
+gated to DEBUG / `--verbose` on the console; promoting them to always-visible is
+**B-2 / G-1**.
 
 ## Calculator-in-the-loop validation workflow
 
@@ -284,37 +460,6 @@ The monitor polls ATP Orders every **30–60 seconds** (configurable, default 45
 5. Diff prints `✓ sells match`, `✓ buy_allocations match`, or specific mismatches like `✗ buy_chunks[2].shares: engine=143 calc=144`.
 6. Iterate engine until diffs are zero on the Feb 27 fixture and at least one live snapshot.
 7. Once parity is proven, the engine output is the source of truth. The calc remains as a spot-check tool.
-
-## Development chunks (today's interim end state)
-
-Each chunk is a separate Claude Code prompt file. Each is independently runnable, has acceptance criteria, and includes its own tests. Order matters where dependencies exist.
-
-| #   | File                                      | Scope                                                                             | Depends on           | Suggested model |
-| --- | ----------------------------------------- | --------------------------------------------------------------------------------- | -------------------- | --------------- | ------------------------------------------------------------------------------------------------------- |
-| 1   | `docs/dev/01_calculator_port.md`          | Port React calculator to Python engine; regression tests                          | none                 | Sonnet 4.6      |
-| 2   | `docs/dev/02_state_schema_and_compare.md` | Full JSON schema; `compute` + `compare` CLIs; React Export + Import State buttons | 1                    | Sonnet 4.6      | **Complete.** Schema, `compute`, `compare` CLIs, Export State button, and Import State button all done. |
-| 3   | `docs/dev/03_atp_read_only.md`            | pywinauto adapters: quote, L2, Orders panel; mock ATP                             | none (parallel-safe) | Sonnet 4.6      |
-| 4   | `docs/dev/04_strategy_generator.md`       | Sell/buy strategy with reasoning; book-relative chunker; ex-div check             | 1, 3                 | Opus 4.7        |
-| 5   | `docs/dev/05_tui_presenter.md`            | Textual approval flow                                                             | 4                    | Sonnet 4.6      |
-| 6   | `docs/dev/06_monitor_loop.md`             | 30–60s polling, stall detection, re-quote suggestion                              | 3                    | Sonnet 4.6      |
-
-Recommended execution order: **1 → 2 → 3 → 4 → 5 → 6**. If you have a second window, chunk 3 can run in parallel with chunks 1–2.
-
-## Out of scope today
-
-- ATP write-side automation (Phase B/C work)
-- React calculator **Import** State button — built; restores positions/signals/closes from a state JSON
-- Live bidirectional sync between engine and React calc (re-export to checkpoint)
-- Account-level kill-switch hotkey (no orders being placed by the app)
-- Positions scraping from ATP (CSV import is the source of truth today)
-- Phase B order pre-fill — even though the architecture supports it, no execution adapter beyond "print to terminal" is built today
-
-## Definition of done for today
-
-- All six chunk prompts executed; their acceptance criteria pass.
-- `python -m cli.compute` on Feb 27 fixture produces output that diffs cleanly against `react_calc_export_feb27.json` (zero `computed` diffs).
-- A dry-run end-to-end pass: CSV import → engine compute → TUI approval → monitor view watching mock ATP fills, including a stall detection event with a correct re-quote suggestion.
-- Smoke test: live ATP read of bid/ask/L2 for one liquid ticker (e.g. SPY) and one thin ticker (e.g. JMAC), and a read of the Orders panel, both succeed.
 
 ## Security model
 
@@ -329,21 +474,3 @@ This repo is designed to be safe to make public. Key controls:
 | API key                                  | `ANTHROPIC_API_KEY` read from env var only — never in source.                                                                                                                                                                                                                          |
 | Fidelity position CSVs                   | `fidelity_rebalancer/csvs/` and `~/Downloads/*.csv` — never committed (`*.csv` not in repo).                                                                                                                                                                                           |
 | Session cookies                          | `.browser_profile/` is gitignored.                                                                                                                                                                                                                                                     |
-
-## Current status
-
-All six chunks are complete. The parity gate in the Definition of Done is now unblocked:
-
-1. Run the React calculator, populate Feb 27 data, click **Export State** → downloads `calc_export_YYYYMMDD_HHMM.json`.
-2. Run `python -m cli.compare --engine engine_state.json --calc calc_export_YYYYMMDD_HHMM.json`.
-3. Iterate engine until zero diffs. Once clean, the engine is the source of truth.
-
-**Import State** (`rebalance_calculator.html` → Setup tab → Import State button) loads a previously exported state JSON back into the calculator — restoring positions, signals, and prev closes — so you can resume a session or cross-check without re-entering CSV data.
-
-### Daily-workflow tooling added on top of the six chunks
-
-Built after the original chunks, these wrap the engine in a guided trading-day flow (all read-only — the app still never places orders):
-
-- **Morning preflight** (`preflight/` package + `cli.preflight`) — an interactive pre-market readiness gate. It confirms Fidelity Trader+ is running with every needed ticker in the Watchlist and an L2 window open for each thin ticker (against the FT+ window cap), then sizes the orders from live FT+ data. On an OCR shortfall it pauses and requires an explicit `yes` before any yfinance fallback that sizes without live L2 depth — there is no silent auto-fallback. It finishes with the pre-trade sanity gate (RED blocks, YELLOW pauses, GREEN proceeds). Decision logic lives in `preflight.checks` / `.planner` / `.sanity` / `.orchestrator` (unit-tested); `cli.preflight` is the thin interactive shell.
-- **Buy progress tracker** (`cli.progress`) — compares buy fill completion against elapsed trading time and flags buys behind schedule.
-- **EOD trade-journal report** (`cli.eod_report`) — formats the append-only `logs/journal*.jsonl` audit log into a post-session summary (session span in local time, event tally, notable-events timeline, poll-error warnings). Schema-tolerant: it skips and counts malformed lines, reports unreadable files distinctly, and surfaces unknown/future event types rather than dropping them.
