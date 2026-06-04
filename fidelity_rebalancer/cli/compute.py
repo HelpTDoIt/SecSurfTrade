@@ -292,7 +292,7 @@ def main() -> None:
 
     # Resolve CSV directory
     if args.inputs:
-        inputs_dir = Path(resolve_path(args.inputs))
+        inputs_dir = resolve_path(args.inputs)
     else:
         inputs_dir = _find_downloads_csvs()
         if inputs_dir is None:
@@ -304,8 +304,8 @@ def main() -> None:
             sys.exit(1)
         print(f"Auto-detected CSVs in: {inputs_dir}", file=sys.stderr)
 
-    signals_path = Path(resolve_path(args.signals))
-    export_path = Path(resolve_output_path(args.export))
+    signals_path = resolve_path(args.signals)
+    export_path = resolve_output_path(args.export)
 
     signals_data = json.loads(signals_path.read_text(encoding="utf-8"))
     signals: dict[str, dict] = signals_data["signals"]

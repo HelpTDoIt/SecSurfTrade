@@ -279,18 +279,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    state_path = Path(resolve_path(args.plan))
+    state_path = resolve_path(args.plan)
     state = RebalanceState.model_validate_json(state_path.read_text(encoding="utf-8"))
 
     start_idx = 0
     initial_decisions: list[StrategyDecision] = []
     if args.resume:
-        resume_path = Path(resolve_path(args.resume))
+        resume_path = resolve_path(args.resume)
         plan = PlanOutput.model_validate_json(resume_path.read_text(encoding="utf-8"))
         initial_decisions = plan.decisions
         start_idx = len(initial_decisions)
 
-    plans_dir = Path(resolve_output_path(args.plans_dir))
+    plans_dir = resolve_output_path(args.plans_dir)
     app = RebalanceApp(state, plans_dir, start_idx, initial_decisions)
     app.run()
 
