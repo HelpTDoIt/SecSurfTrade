@@ -36,6 +36,7 @@ from engine.chunker import (
 )
 from engine.decision_context import DecisionContext
 from engine.escalation import _escalate
+from engine.size_context import PositionSizeContext
 from engine.spread_context import SpreadContext
 from state.schema import ChunkRecord, SellRecord, SellStrategy
 
@@ -119,7 +120,7 @@ def _spread_bullet(f: _Features) -> str:
 def _adv_bullet(f: _Features, sell: SellRecord) -> str:
     if f.pct_of_adv is None:
         return f"ADV: unknown — sizing assumes book depth alone."
-    return f"Order is {f.pct_of_adv:.2f}% of 30-day ADV ({sell.shares:.0f} sh)."
+    return f"Order is {f.pct_of_adv:.2f}% of ADV ({sell.shares:.0f} sh)."
 
 
 def _vol_bullet(f: _Features) -> str:
@@ -136,17 +137,20 @@ def _decide(
     quote: QuoteSnapshot,
     spread_ctx: Optional[SpreadContext] = None,
     market_minutes: Optional[int] = None,
+    size_ctx: Optional[PositionSizeContext] = None,
 ) -> tuple[str, str, float, list[str]]:
     """Returns (rule, urgency, limit_price, reasoning_bullets).
 
     market_minutes: minutes since market open (9:30 ET).  None = unknown.
+    size_ctx: per-class %ADV cutoffs (G-5).  None = legacy 2/5 defaults.
     """
     sc = spread_ctx or SpreadContext.default()
+    zc = size_ctx or PositionSizeContext.default()
     tight  = f.spread_bps < sc.tight_bps
     wide   = f.spread_bps > sc.wide_bps
     healthy_vol = f.rel_vol is not None and f.rel_vol > 1.0
-    small_pos   = f.pct_of_adv is not None and f.pct_of_adv < 2.0
-    large_pos   = f.pct_of_adv is not None and f.pct_of_adv > 5.0
+    small_pos   = f.pct_of_adv is not None and f.pct_of_adv < zc.sell_small_pct
+    large_pos   = f.pct_of_adv is not None and f.pct_of_adv > zc.sell_large_pct
 
     # Rule 0: opening gap capture — stock gapped up, first 30 min of trading
     gap_up = (f.day_change_pct is not None and f.day_change_pct > 0.5
@@ -181,7 +185,7 @@ def _decide(
         return ("tight_spread_large_position", "patient", limit, [
             _spread_bullet(f),
             _adv_bullet(f, sell),
-            f"Position is large (>5% ADV) — drip the order in via more chunks.",
+            f"Position is large (>{zc.sell_large_pct:g}% ADV) — drip the order in via more chunks.",
             f"LIMIT at bid ${limit:.4f} to avoid pushing the market.",
         ])
 
@@ -275,6 +279,7 @@ def generate_sell_strategy(
     feats = _features(sell, quote, today, adv, exdiv_calendar, vwap=ctx.vwap)
     rule, urgency, limit_price, reasoning = _decide(
         feats, sell, quote, ctx.spread_ctx, market_minutes=ctx.market_minutes,
+        size_ctx=ctx.size_ctx,
     )
 
     # Time-of-day urgency ramp (symmetric with buys; nudges toward the bid).

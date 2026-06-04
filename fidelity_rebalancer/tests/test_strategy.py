@@ -718,3 +718,151 @@ class TestSellUrgencyEscalation:
             assert shared[0] == legacy[0], f"urgency mismatch at mm={mm}"
             assert shared[1] == pytest.approx(legacy[1]), f"limit mismatch at mm={mm}"
             assert len(shared[2]) == len(legacy[2]), f"bullet count mismatch at mm={mm}"
+
+
+# ── Step 4 (G-5): per-asset-class %ADV thresholds ─────────────────────────
+#
+# Acceptance: a leveraged ETF and a large-cap at the SAME %ADV select
+# DIFFERENT size rules.  These use the real shared _TICKER_CLASS buckets
+# (SPY=large_cap, TQQQ=leveraged) via PositionSizeContext.
+
+
+def _size_ctx(symbol: str):
+    from engine.size_context import size_context_for
+
+    return size_context_for(symbol)
+
+
+def test_sell_per_class_same_pct_adv_diverges():
+    """At 4% ADV + tight spread: large-cap (SPY) stays 'default' while a
+    leveraged ETF (TQQQ) flips to 'tight_spread_large_position'.
+
+    SPY large_cap cutoffs: small<3%, large>8% → 4% is neither.
+    TQQQ leveraged cutoffs: small<1%, large>2.5% → 4% is large.
+    """
+    # Same numeric inputs for both, only the ticker (→ asset class) differs.
+    def _run(symbol: str):
+        sell = SellRecord(
+            account="Test *0000",
+            strategy="Strategy Beta",
+            ticker=symbol,
+            shares=400,  # 4% of adv=10_000
+            limit_price=100.0,
+            est_proceeds=40_000,
+        )
+        quote = _quote(symbol, bid=99.99, ask=100.01, last=100.00,
+                       prev_close=100.00, volume=1_000_000)
+        book = _l2(symbol, [(99.99, 5000)] * 3, [(100.01, 5000)] * 3)
+        strat, _ = generate_sell_strategy(
+            sell, quote, book, vol5min=50_000.0,
+            today=date(2026, 4, 15),
+            ctx=DecisionContext(adv=10_000, size_ctx=_size_ctx(symbol)),
+        )
+        return strat.rule
+
+    spy_rule = _run("SPY")
+    tqqq_rule = _run("TQQQ")
+    assert spy_rule != tqqq_rule
+    assert spy_rule == "default"
+    assert tqqq_rule == "tight_spread_large_position"
+
+
+def test_buy_per_class_same_pct_adv_diverges():
+    """At 4% ADV (spread 7bps, low vol): large-cap (SPY) is 'default' while a
+    leveraged ETF (TQQQ) flips to 'large_position'.
+
+    SPY large_cap buy cutoff: large>5% → 4% not large.
+    TQQQ leveraged buy cutoff: large>1.5% → 4% is large.
+    """
+    def _run(symbol: str):
+        buy = BuyAllocationRecord(
+            account="Test *0000",
+            strategy="Strategy Delta",
+            ticker=symbol,
+            dollar_target=40_000,
+            limit_price=100.0,
+            share_target=400,  # 4% of adv=10_000
+            est_cost=40_000,
+        )
+        quote = _quote(symbol, bid=99.965, ask=100.035, last=100.00,
+                       prev_close=100.00, volume=200_000)
+        book = _l2(symbol, [(99.96, 500)] * 3, [(100.03, 500)] * 3)
+        strat, _ = generate_buy_strategy(
+            buy, quote, book, vol5min=20_000.0,
+            ctx=DecisionContext(adv=10_000, size_ctx=_size_ctx(symbol)),
+        )
+        return strat.rule
+
+    spy_rule = _run("SPY")
+    tqqq_rule = _run("TQQQ")
+    assert spy_rule != tqqq_rule
+    assert spy_rule == "default"
+    assert tqqq_rule == "large_position"
+
+
+def test_size_ctx_default_preserves_legacy_cutoffs():
+    """Unmapped ticker → default() → legacy 2/5 (sell), 3 (buy)."""
+    from engine.size_context import PositionSizeContext, size_context_for
+
+    d = size_context_for("ZZZ_NOT_A_TICKER")
+    assert d == PositionSizeContext.default()
+    assert d.sell_small_pct == 2.0
+    assert d.sell_large_pct == 5.0
+    assert d.buy_large_pct == 3.0
+
+
+def test_size_ctx_none_falls_back_to_legacy_in_decide():
+    """ctx.size_ctx=None must reproduce the legacy hardcoded behavior:
+    SPY at 6% ADV + tight spread → tight_spread_large_position (>5% legacy)."""
+    sell = SellRecord(
+        account="Test *0000",
+        strategy="Strategy Beta",
+        ticker="SPY",
+        shares=600,  # 6% of adv=10_000 (> legacy 5%, < per-class large_cap 8%)
+        limit_price=100.0,
+        est_proceeds=60_000,
+    )
+    quote = _quote("SPY", bid=99.99, ask=100.01, last=100.00,
+                   prev_close=100.00, volume=1_000_000)
+    book = _l2("SPY", [(99.99, 5000)] * 3, [(100.01, 5000)] * 3)
+    strat, _ = generate_sell_strategy(
+        sell, quote, book, vol5min=50_000.0,
+        today=date(2026, 4, 15),
+        ctx=DecisionContext(adv=10_000),  # size_ctx defaults to None → legacy
+    )
+    # Legacy >5% large fires; with the SPY per-class (>8%) it would NOT.
+    assert strat.rule == "tight_spread_large_position"
+
+
+def test_g6_single_adv_path_end_to_end(monkeypatch):
+    """G-6: assert ONE ADV definition flows end-to-end.
+
+    The generator must consume ctx.adv (the watchlist 10-day ADV the CLI
+    supplies) and must NOT call get_adv() (30-day yfinance fallback) when
+    ctx.adv is provided.  We poison get_adv to prove it is never reached.
+    """
+    import engine.strategy_sell as ss
+
+    def _boom(symbol):  # pragma: no cover - must never run
+        raise AssertionError("get_adv() fallback called despite ctx.adv set")
+
+    monkeypatch.setattr(ss, "get_adv", _boom)
+
+    sell = SellRecord(
+        account="Test *0000",
+        strategy="Strategy Beta",
+        ticker="SPY",
+        shares=400,
+        limit_price=100.0,
+        est_proceeds=40_000,
+    )
+    quote = _quote("SPY", bid=99.99, ask=100.01, last=100.00,
+                   prev_close=100.00, volume=1_000_000)
+    book = _l2("SPY", [(99.99, 5000)] * 3, [(100.01, 5000)] * 3)
+    strat, _ = generate_sell_strategy(
+        sell, quote, book, vol5min=50_000.0,
+        today=date(2026, 4, 15),
+        ctx=DecisionContext(adv=10_000, size_ctx=_size_ctx("SPY")),
+    )
+    # 400/10_000 = 4% of ADV → reasoning reflects the single ADV source.
+    assert any("4.00% of ADV" in b for b in strat.reasoning)
