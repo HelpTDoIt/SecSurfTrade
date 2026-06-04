@@ -21,8 +21,10 @@ Install
 """
 from __future__ import annotations
 
-import sys
+import logging
 from datetime import datetime, timezone
+
+_log = logging.getLogger(__name__)
 
 from adapters import QuoteSnapshot, WatchlistRow
 
@@ -142,10 +144,7 @@ class YFinanceWatchlistAdapter:
                     raise ValueError("empty info dict")
                 results[sym] = _info_to_watchlist_row(sym, info)
             except Exception as exc:
-                print(
-                    f"  Warning: yfinance failed for {sym}: {exc}",
-                    file=sys.stderr,
-                )
+                _log.warning("yfinance failed for %s: %s", sym, exc)
 
         return results
 

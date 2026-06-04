@@ -31,8 +31,11 @@ Install
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
+
+_log = logging.getLogger(__name__)
 
 from adapters import WatchlistRow
 from adapters._atp_connect import get_app, with_retry
@@ -292,20 +295,18 @@ def _read_watchlist_ocr() -> dict[str, WatchlistRow]:
     if _DEBUG:
         from PIL import Image as _Img
         _Img.fromarray(wl_img).save("debug_wl_crop.png")
-        print(f"[WL DEBUG] crop x={wl_x}..{wl_w} ({wl_w - wl_x}x{wl_h}px) -> debug_wl_crop.png")
+        _log.debug("[WL DEBUG] crop x=%d..%d (%dx%dpx) -> debug_wl_crop.png", wl_x, wl_w, wl_w - wl_x, wl_h)
 
     all_cells = _ocr_cells(wl_img)
     wl_cells = all_cells
 
-    if _DEBUG:
-        print(f"[WL DEBUG] OCR returned {len(wl_cells)} cells")
-        for c in wl_cells:
-            print(f"  x={c.x:6.0f}  y={c.y:6.0f}  {c.text!r}")
+    _log.debug("[WL DEBUG] OCR returned %d cells", len(wl_cells))
+    for c in wl_cells:
+        _log.debug("  x=%6.0f  y=%6.0f  %r", c.x, c.y, c.text)
 
     rows = _cluster_rows(wl_cells)
 
-    if _DEBUG:
-        print(f"[WL DEBUG] clustered into {len(rows)} rows")
+    _log.debug("[WL DEBUG] clustered into %d rows", len(rows))
 
     header_idx: int | None = None
     for i, row in enumerate(rows):
@@ -327,17 +328,14 @@ def _read_watchlist_ocr() -> dict[str, WatchlistRow]:
             "Header cells found but none matched known column names."
         )
 
-    if _DEBUG:
-        print(f"[WL DEBUG] header at row {header_idx}, col_map: {col_map}")
-        print(f"[WL DEBUG] {len(rows) - header_idx - 1} data rows to parse")
+    _log.debug("[WL DEBUG] header at row %d, col_map: %s", header_idx, col_map)
+    _log.debug("[WL DEBUG] %d data rows to parse", len(rows) - header_idx - 1)
 
     results: dict[str, WatchlistRow] = {}
     for row in rows[header_idx + 1:]:
         constrained = _constrain_cells(row, col_map)
         if not constrained:
-            if _DEBUG:
-                texts = [c.text for c in row]
-                print(f"  [WL DEBUG] row dropped by constrain: {texts}")
+            _log.debug("  [WL DEBUG] row dropped by constrain: %s", [c.text for c in row])
             continue
         # "Totals" row marks the end of watchlist data; everything below is
         # the Orders panel or other UI elements.
@@ -346,9 +344,8 @@ def _read_watchlist_ocr() -> dict[str, WatchlistRow]:
         entry = _parse_wl_data_row(constrained, col_map)
         if entry:
             results[entry.symbol] = entry
-        elif _DEBUG:
-            texts = [c.text for c in constrained]
-            print(f"  [WL DEBUG] row rejected by parse: {texts}")
+        else:
+            _log.debug("  [WL DEBUG] row rejected by parse: %s", [c.text for c in constrained])
 
     if not results:
         raise RuntimeError(
