@@ -462,11 +462,11 @@ def main() -> None:
 
     # Resolve: try as-is first, then relative to package root
     raw_pattern = args.journal
-    resolved = resolve_path(raw_pattern)
+    resolved_pattern = str(resolve_path(raw_pattern))
 
     # Glob expansion -- try resolved pattern first, then original
-    files = glob.glob(resolved)
-    if not files and resolved != raw_pattern:
+    files = glob.glob(resolved_pattern)
+    if not files and resolved_pattern != raw_pattern:
         files = glob.glob(raw_pattern)
 
     if not files:

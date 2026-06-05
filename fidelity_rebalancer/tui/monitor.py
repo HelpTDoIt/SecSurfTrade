@@ -793,7 +793,7 @@ def main() -> None:
         )
         plan_path = None
     else:
-        plan_path = Path(resolve_path(args.plan))
+        plan_path = resolve_path(args.plan)
         plan = PlanOutput.model_validate_json(plan_path.read_text(encoding="utf-8"))
 
     poll_seconds = args.poll_seconds
