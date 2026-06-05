@@ -21,48 +21,9 @@ sys.path.insert(0, str(_ROOT))
 
 import argparse
 
+from engine import observability
+
 _log = logging.getLogger("monitor")
-
-
-def _setup_logging(log_dir: Path, verbose: bool) -> None:
-    """Configure file + optional console logging.
-
-    A log file is always created at ``log_dir/monitor.log``.  When *verbose*
-    is True (i.e. ``--test`` flag is active) the file receives DEBUG messages
-    and a second StreamHandler echoes them to stderr.  In normal operation only
-    INFO and above go to the file and nothing is printed to the console (so the
-    Textual TUI isn't polluted).
-
-    Safe to call multiple times — ``logging.basicConfig`` is idempotent after
-    the first call, but we configure handlers explicitly so re-runs in tests
-    don't accumulate duplicate handlers.
-    """
-    log_dir.mkdir(parents=True, exist_ok=True)
-    root = logging.getLogger()
-    # Remove any handlers added by a previous call (e.g. in tests)
-    root.handlers.clear()
-
-    fmt = logging.Formatter(
-        "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    fh = logging.FileHandler(log_dir / "monitor.log", encoding="utf-8")
-    fh.setFormatter(fmt)
-    fh.setLevel(logging.DEBUG)  # file always captures everything
-
-    root.setLevel(logging.DEBUG if verbose else logging.INFO)
-    root.addHandler(fh)
-
-    if verbose:
-        # Console output only in --test mode so Textual layout isn't disrupted
-        # in normal use.  Textual redirects stdout/stderr but not to the TUI
-        # content area, so these lines appear in the terminal before the TUI
-        # takes over.
-        ch = logging.StreamHandler()
-        ch.setFormatter(fmt)
-        ch.setLevel(logging.DEBUG)
-        root.addHandler(ch)
 
 
 from rich.text import Text
@@ -749,7 +710,7 @@ def main() -> None:
     # Anchor to the package root so logs always land in fidelity_rebalancer/logs/
     # regardless of which directory the user invokes the monitor from.
     log_dir = _ROOT / "logs"
-    _setup_logging(log_dir, verbose=args.test)
+    observability.setup_logging(log_dir, verbose=args.test, filename="monitor.log")
     _log.info(
         "monitor starting  scan=%s  test=%s  poll=%ds",
         args.scan,
