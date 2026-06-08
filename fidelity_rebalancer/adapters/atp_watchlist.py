@@ -50,10 +50,10 @@ _WL_COLS = [
     "symbol", "last", "bid", "ask", "bid size", "ask size",
     "volume", "close", "div ex-date", "div pay date",
     "div local", "10d avg vol", "90d avg vol", "vwap",
-    "% chg", "open", "ext hrs last", "ext hrs % chg",
+    "% chg", "open", "ext hrs last", "ext hrs % chg", "day range"
 ]
 # Substrings that only appear in Watchlist headers (not Orders headers)
-_WL_MARKERS = {"close", "vwap", "10d", "90d", "div ex", "div local", "ext hrs"}
+_WL_MARKERS = {"close", "vwap", "10d", "90d", "div ex", "div local", "ext hrs", "range"}
 
 
 # ── UIA attempt (documents why it fails) ──────────────────────────────────
@@ -256,6 +256,15 @@ def _parse_wl_data_row(row_cells, col_map: dict[str, float]) -> WatchlistRow | N
         raw = first(col).replace("%", "").strip()
         return parse_price(raw)
 
+    day_range_raw = first("day range")
+    day_range_low = 0.0
+    day_range_high = 0.0
+    if day_range_raw:
+        m = re.search(r'([\d\.]+)\s*—◆—\s*([\d\.]+)', day_range_raw)
+        if m:
+            day_range_low = parse_price(m.group(1))
+            day_range_high = parse_price(m.group(2))
+
     symbol = sym_upper
     return WatchlistRow(
         symbol=symbol,
@@ -276,11 +285,13 @@ def _parse_wl_data_row(row_cells, col_map: dict[str, float]) -> WatchlistRow | N
         open_price=fp("open"),
         ext_hrs_last=fp("ext hrs last"),
         ext_hrs_pct_chg=fpct("ext hrs % chg"),
+        day_range_low=day_range_low,
+        day_range_high=day_range_high,
     )
 
 
 def _read_watchlist_ocr() -> dict[str, WatchlistRow]:
-    from adapters.atp_ocr import _capture_full_window, _DEBUG
+    from adapters.atp_ocr import _capture_full_window, _debug_save
     full = _capture_full_window()
     img_h, img_w = full.shape[:2]
 
@@ -292,10 +303,11 @@ def _read_watchlist_ocr() -> dict[str, WatchlistRow]:
     wl_h = int(img_h * 0.40)
     wl_img = full[:wl_h, wl_x:wl_w, :]
 
-    if _DEBUG:
-        from PIL import Image as _Img
-        _Img.fromarray(wl_img).save("debug_wl_crop.png")
-        _log.debug("[WL DEBUG] crop x=%d..%d (%dx%dpx) -> debug_wl_crop.png", wl_x, wl_w, wl_w - wl_x, wl_h)
+    dest = _debug_save(wl_img, "wl_crop")
+    if dest:
+        _log.debug("[WL DEBUG] crop x=%d..%d (%dx%dpx) -> %s", wl_x, wl_w, wl_w - wl_x, wl_h, dest)
+    else:
+        _log.debug("[WL DEBUG] crop x=%d..%d (%dx%dpx)", wl_x, wl_w, wl_w - wl_x, wl_h)
 
     all_cells = _ocr_cells(wl_img)
     wl_cells = all_cells

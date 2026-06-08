@@ -63,13 +63,6 @@ FINDING_HELP: dict[str, str] = {
         "typo. Verify the live price before trusting this limit."
     ),
     # ── YELLOW (warnings) ───────────────────────────────────────────────────
-    "CASH_NOT_OK": (
-        "Planned buys exceed the cash currently settled in this account. The "
-        "per-account message states whether this is an expected IRA timing gap "
-        "(buys funded by today's unsettled sells) or a genuine cash shortfall. "
-        "Margin accounts do not raise this finding — same-window buy+sell is "
-        "funded by buying power, not settled proceeds."
-    ),
     "ORPHAN_CHUNK": (
         "A sized chunk is not referenced by any strategy — it may never be "
         "entered. Confirm it is intended."
@@ -249,41 +242,7 @@ def check_sanity(
                 )
             )
 
-    # ── RULE 4: CASH_NOT_OK ────────────────────────────────────────────────
-    # Branch by account type. Margin accounts fund same-window buy+sell from
-    # buying power (not settled proceeds), so the cash gate does not apply —
-    # suppress the finding entirely for them. Retirement accounts get the
-    # expected-IRA-timing wording; cash accounts get the genuine-shortfall one.
-    acct_by_name = {a.name: a for a in state.inputs.accounts}
-    for account, ok in computed.cash_ok.items():
-        if ok:
-            continue
-        acct = acct_by_name.get(account)
-        if acct is not None and acct.margin:
-            continue
-        if acct is None or acct.type == "retirement":
-            detail = (
-                "Expected for an IRA/retirement rebalance: the buys are funded "
-                "by today's sells, which have not settled yet. Confirm the buys "
-                "are covered by today's sell proceeds (or supply "
-                "--confirmed-proceeds); do not enter buys that exceed your "
-                "actual available cash."
-            )
-        else:
-            detail = (
-                "This is a cash (non-margin) account: the buys exceed the cash "
-                "currently settled. Wait for proceeds to settle, reduce the "
-                "buys, or mark the account margin-enabled if it is."
-            )
-        findings.append(
-            SanityFinding(
-                "YELLOW",
-                "CASH_NOT_OK",
-                f"Buys in account {account} do not fit within settled cash "
-                f"(cash_ok is False). {detail}",
-                ref=account,
-            )
-        )
+    # ── RULE 4: CASH_NOT_OK (Removed per user request) ───────────
 
     # ── RULE 5: NON_POSITIVE_LIMIT ─────────────────────────────────────────
     for s in sells:

@@ -41,6 +41,7 @@ from engine.chunker import _DAILY_SIGMA_BPS, build_chunks_pov, vol_profile_multi
 from engine.decision_context import DecisionContext
 from engine.size_context import size_context_for
 from engine.spread_context import spread_context_for
+from engine.scheduler import build_day_schedule
 from engine.strategy_buy import generate_buy_strategy
 from engine.strategy_sell import generate_sell_strategy
 from state.importer import load_state, save_state
@@ -57,18 +58,7 @@ OCR_SHORTFALL_MARKER = "OCR_SHORTFALL"
 class OCRShortfall(Exception):
     """Raised in strict-atp mode when live FT+ OCR data is incomplete."""
 
-
-def _realized_vol_bps(symbol: str, lookback: int = 20) -> float:
-    """
-    Daily realized volatility in bps from yfinance daily closes.
-    e.g. 100 bps = 1% daily vol.  Matches _DAILY_SIGMA_BPS units expected by
-    estimate_impact_bps (square-root law uses daily sigma, not annualized).
-    Returns _DAILY_SIGMA_BPS (100) as fallback if data is unavailable.
-    """
-    try:
-        import yfinance as yf
-    except ImportError:
-        return _DAILY_SIGMA_BPS
+def _estimate_historical_volatility(symbol: str, lookback: int = 20) -> float:
     try:
         hist = yf.Ticker(symbol).history(period=f"{lookback + 5}d")
         if hist is None or len(hist) < 5:
@@ -244,6 +234,7 @@ def _rechunk_sell_pov(
                 shares=cd["shares"],
                 limit_price=cd["limit_price"],
                 cost=cd["cost"],
+                vol5min=(adv / 78.0) if adv else 1_000_000.0,
             )
         )
     strat.chunk_ids = chunk_ids
@@ -285,6 +276,7 @@ def _rechunk_buy_pov(
                 shares=cd["shares"],
                 limit_price=cd["limit_price"],
                 cost=cd["cost"],
+                vol5min=(adv / 78.0) if adv else 1_000_000.0,
             )
         )
     strat.chunk_ids = chunk_ids
@@ -468,6 +460,11 @@ def main() -> None:
         help="Show per-trade detail lines (ticker, rule, limit price, chunk count). "
         "Without this flag these are suppressed to avoid capturing sensitive data in logs.",
     )
+    parser.add_argument(
+        "--schedule",
+        action="store_true",
+        help="Use Phase 3 multi-tranche scheduler (premarket/main/sweep) instead of single execution window.",
+    )
     args = parser.parse_args()
 
     # Engine observability: always-on file log (INFO; DEBUG + console with -v)
@@ -490,6 +487,8 @@ def main() -> None:
         _adjust_buy_budgets(state, confirmed)
 
     # Collect all unique tickers across sells and buys
+    acct_type_map = {a.name: a.type for a in state.inputs.accounts}
+
     all_tickers = sorted(
         {
             *(sell.ticker for sell in state.computed.sells),
@@ -528,9 +527,13 @@ def main() -> None:
 
     # Per-symbol realized volatility for impact model
     print(f"Computing realized volatility for {len(all_tickers)} ticker(s)...")
+    from engine.volatility import get_realized_volatility
     vol_map: dict[str, float] = {}
     for sym in all_tickers:
-        sigma = _realized_vol_bps(sym)
+        row = watchlist.get(sym)
+        drl = getattr(row, 'day_range_low', 0.0) if row else 0.0
+        drh = getattr(row, 'day_range_high', 0.0) if row else 0.0
+        sigma = get_realized_volatility(sym, day_range_low=drl, day_range_high=drh)
         vol_map[sym] = sigma
         label = (
             f"{sigma:.0f} bps"
@@ -689,22 +692,44 @@ def main() -> None:
                 size_ctx=zc,
             ),
         )
-        if not l2.bids:
-            chunks, pov_info = _rechunk_sell_pov(
+        if args.schedule:
+            chunks = build_day_schedule(
                 sell,
-                strat,
-                adv=adv_val,
-                spread_bps=_spread_bps(quote),
+                "sell",
+                ctx=DecisionContext(
+                    market_minutes=mkt_minutes,
+                    spread_ctx=sc,
+                    vwap=vwap_val,
+                    adv=adv_val,
+                    size_ctx=zc,
+                ),
+                now=now,
+                config=state.inputs.config,
+                base_limit_price=strat.limit_price,
+                quote=quote,
+                account_type=acct_type_map.get(sell.account),
                 sigma_bps=vol_map.get(sell.ticker, _DAILY_SIGMA_BPS),
             )
-            strat.reasoning.extend(_pov_bullets(pov_info))
+            strat.chunk_ids = [c.chunk_id for c in chunks]
+            pov_info = {"tier": 0, "pov_pct": 0}
+            strat.reasoning.append("Scheduler: Phase 3 multi-tranche active.")
         else:
-            pov_info = {
-                "tier_label": "book_relative",
-                "tier": 0,
-                "n_chunks": len(chunks),
-                "est_impact_bps": 0.0,
-            }
+            if not l2.bids:
+                chunks, pov_info = _rechunk_sell_pov(
+                    sell,
+                    strat,
+                    adv=adv_val,
+                    spread_bps=_spread_bps(quote),
+                    sigma_bps=vol_map.get(sell.ticker, _DAILY_SIGMA_BPS),
+                )
+                strat.reasoning.extend(_pov_bullets(pov_info))
+            else:
+                pov_info = {
+                    "tier_label": "book_relative",
+                    "tier": 0,
+                    "n_chunks": len(chunks),
+                    "est_impact_bps": 0.0,
+                }
         sell_strategies.append(strat)
         all_sell_chunks.extend(chunks)
         if pov_info.get("tier") == 4:
@@ -782,22 +807,44 @@ def main() -> None:
                 size_ctx=zc,
             ),
         )
-        if not l2.asks:
-            chunks, pov_info = _rechunk_buy_pov(
+        if args.schedule:
+            chunks = build_day_schedule(
                 buy,
-                strat,
-                adv=adv_val,
-                spread_bps=_spread_bps(quote),
+                "buy",
+                ctx=DecisionContext(
+                    market_minutes=mkt_minutes,
+                    spread_ctx=sc,
+                    vwap=vwap_val,
+                    adv=adv_val,
+                    size_ctx=zc,
+                ),
+                now=now,
+                config=state.inputs.config,
+                base_limit_price=strat.limit_price,
+                quote=quote,
+                account_type=acct_type_map.get(buy.account),
                 sigma_bps=vol_map.get(buy.ticker, _DAILY_SIGMA_BPS),
             )
-            strat.reasoning.extend(_pov_bullets(pov_info))
+            strat.chunk_ids = [c.chunk_id for c in chunks]
+            pov_info = {"tier": 0, "pov_pct": 0}
+            strat.reasoning.append("Scheduler: Phase 3 multi-tranche active.")
         else:
-            pov_info = {
-                "tier_label": "book_relative",
-                "tier": 0,
-                "n_chunks": len(chunks),
-                "est_impact_bps": 0.0,
-            }
+            if not l2.asks:
+                chunks, pov_info = _rechunk_buy_pov(
+                    buy,
+                    strat,
+                    adv=adv_val,
+                    spread_bps=_spread_bps(quote),
+                    sigma_bps=vol_map.get(buy.ticker, _DAILY_SIGMA_BPS),
+                )
+                strat.reasoning.extend(_pov_bullets(pov_info))
+            else:
+                pov_info = {
+                    "tier_label": "book_relative",
+                    "tier": 0,
+                    "n_chunks": len(chunks),
+                    "est_impact_bps": 0.0,
+                }
         buy_strategies.append(strat)
         all_buy_chunks.extend(chunks)
         if pov_info.get("tier") == 4:

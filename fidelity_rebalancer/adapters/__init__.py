@@ -106,6 +106,8 @@ class WatchlistRow:
     open_price: float = 0.0     # "Open" — today's opening price
     ext_hrs_last: float = 0.0   # "Ext Hrs Last" — extended hours last price
     ext_hrs_pct_chg: float = 0.0  # "Ext Hrs % Chg" — extended hours % change
+    day_range_low: float = 0.0  # "Day Range" — intraday low
+    day_range_high: float = 0.0 # "Day Range" — intraday high
 
 
 @runtime_checkable

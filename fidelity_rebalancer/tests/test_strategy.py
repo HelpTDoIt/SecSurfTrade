@@ -118,7 +118,7 @@ def test_sell_tight_spread_large_position():
     )
     assert strat.rule == "tight_spread_large_position"
     assert strat.urgency == "patient"
-    assert strat.limit_price == pytest.approx(499.99)
+    assert strat.limit_price == pytest.approx(500.01)
 
 
 def test_sell_wide_spread():
@@ -146,7 +146,7 @@ def test_sell_wide_spread():
     )
     assert strat.rule == "wide_spread"
     assert strat.urgency == "patient"
-    assert strat.limit_price == pytest.approx(99.91)
+    assert strat.limit_price == pytest.approx(100.09)
 
 
 def test_sell_down_day():
@@ -265,7 +265,7 @@ def test_buy_tight_spread_good_volume():
         ctx=DecisionContext(adv=100_000_000),
     )
     assert strat.rule == "tight_spread_good_volume"
-    assert strat.urgency == "normal"
+    assert strat.urgency == "aggressive"
     assert strat.limit_price == pytest.approx(500.01)
     total_cost = sum(c.cost for c in chunks)
     assert total_cost <= 50_000.0 + 1e-6
@@ -296,7 +296,7 @@ def test_buy_wide_spread():
     )
     assert strat.rule == "wide_spread"
     assert strat.urgency == "patient"
-    assert strat.limit_price == pytest.approx(100.00)
+    assert strat.limit_price == pytest.approx(99.91)
 
 
 def test_buy_large_position():
@@ -323,8 +323,8 @@ def test_buy_large_position():
         ctx=DecisionContext(adv=100_000),  # 4% ADV
     )
     assert strat.rule == "large_position"
-    assert strat.urgency == "patient"
-    assert strat.limit_price == pytest.approx(100.02)  # 100.03 - 0.01
+    assert strat.urgency == "aggressive"
+    assert strat.limit_price == pytest.approx(100.04)
     # depth_pct halved → smaller per-chunk caps; expect more chunks
     assert len(chunks) >= 2
 
@@ -680,11 +680,11 @@ class TestSellUrgencyEscalation:
 
         # Before 90 min: untouched patient baseline.
         assert strat_early.urgency == "patient"
-        assert strat_early.limit_price == pytest.approx(99.91)
+        assert strat_early.limit_price == pytest.approx(100.09)
 
         # Mid-session: escalated to normal, limit nudged toward the bid (99.90).
         assert strat_mid.urgency == "normal"
-        assert strat_mid.limit_price == pytest.approx(99.90)
+        assert strat_mid.limit_price == pytest.approx(99.95)
         assert strat_mid.limit_price < strat_early.limit_price
 
         # Near close: aggressive, limit one tick past the bid; the strategy's

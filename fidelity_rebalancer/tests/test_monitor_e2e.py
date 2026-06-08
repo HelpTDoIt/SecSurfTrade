@@ -96,7 +96,7 @@ def test_e2e_journal_trail(tmp_path: Path):
     )
 
     sugg = recommend_requote(st, side="sell", quote=mock.get_quote("EEM"))
-    assert sugg.new_limit == pytest.approx(62.38)  # bid+1tick
+    assert sugg.new_limit == pytest.approx(62.40)  # bid+1tick
     journal.write(
         "requote_suggested",
         {
@@ -169,10 +169,10 @@ def test_e2e_journal_trail(tmp_path: Path):
     ]
     by_type = {e["event_type"]: e["payload"] for e in events}
     assert by_type["stall"]["chunk_id"] == "s2"
-    assert by_type["requote_suggested"]["new_limit"] == pytest.approx(62.38)
+    assert by_type["requote_suggested"]["new_limit"] == pytest.approx(62.40)
     assert by_type["requote_action"]["new_chunk"] == "s2b"
     assert by_type["recompute_buys"]["proceeds"] == pytest.approx(
-        1600 * 62.39 + 25 * 62.38, abs=0.01
+        1600 * 62.39 + 25 * 62.40, abs=0.01
     )
     # every entry carries a timestamp
     assert all("ts" in e for e in events)

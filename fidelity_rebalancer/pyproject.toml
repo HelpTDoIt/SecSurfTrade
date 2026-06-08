@@ -14,6 +14,7 @@ dependencies = [
     "loguru>=0.7",
     "yfinance>=0.2.36",
     "keyring>=24",
+    "websockets>=13",
 ]
 
 [project.optional-dependencies]

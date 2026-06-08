@@ -21,7 +21,7 @@ import pytest
 from adapters import Level, Level2Snapshot, QuoteSnapshot
 from engine.chunker import (
     _DAILY_SIGMA_BPS,
-    build_gap_capture_chunks,
+    build_premarket_chunks,
     estimate_impact_bps,
     vol_profile_multiplier,
 )
@@ -177,7 +177,7 @@ class TestVWAPRules:
             ctx=DecisionContext(adv=10_000_000, vwap=100.00),
         )
         assert strat.rule == "below_vwap"
-        assert strat.urgency == "normal"
+        assert strat.urgency == "patient"
 
     def test_buy_above_vwap(self):
         buy = BuyAllocationRecord(
@@ -289,7 +289,7 @@ class TestImpactModel:
 
 
 class TestGapCapture:
-    def test_gap_capture_rule_fires_at_open(self):
+    def test_premarket_rule_fires_at_open(self):
         sell = SellRecord(
             account="Test Retirement",
             strategy="Strategy Gamma",
@@ -317,13 +317,13 @@ class TestGapCapture:
             today=date(2026, 4, 15),
             ctx=DecisionContext(adv=10_000_000, market_minutes=10),
         )
-        assert strat.rule == "gap_capture"
+        assert strat.rule == "premarket"
         assert strat.urgency == "aggressive"
         assert len(chunks) == 3
         assert chunks[0].limit_price == pytest.approx(99.00)  # gap capture: prev×0.99
         assert chunks[0].shares == pytest.approx(300, abs=100)
 
-    def test_gap_capture_does_not_fire_after_30min(self):
+    def test_premarket_does_not_fire_after_30min(self):
         sell = SellRecord(
             account="Test Retirement",
             strategy="Strategy Gamma",
@@ -350,9 +350,9 @@ class TestGapCapture:
             today=date(2026, 4, 15),
             ctx=DecisionContext(adv=10_000_000, market_minutes=45),
         )
-        assert strat.rule != "gap_capture"
+        assert strat.rule != "premarket"
 
-    def test_gap_capture_does_not_fire_on_flat_open(self):
+    def test_premarket_does_not_fire_on_flat_open(self):
         sell = SellRecord(
             account="Test Retirement",
             strategy="Strategy Gamma",
@@ -379,27 +379,27 @@ class TestGapCapture:
             today=date(2026, 4, 15),
             ctx=DecisionContext(adv=10_000_000, market_minutes=10),
         )
-        assert strat.rule != "gap_capture"
+        assert strat.rule != "premarket"
 
 
 class TestGapCaptureChunker:
     def test_three_phases(self):
-        chunks = build_gap_capture_chunks(1000, 99.00, 100.00, 98.50)
+        chunks = build_premarket_chunks(1000, 99.00, 100.00, 98.50)
         assert len(chunks) == 3
         total = sum(c["shares"] for c in chunks)
         assert total == 1000
-        assert chunks[0]["phase"] == "gap_capture"
-        assert chunks[1]["phase"] == "standard"
+        assert chunks[0]["phase"] == "premarket"
+        assert chunks[1]["phase"] == "main"
         assert chunks[2]["phase"] == "sweep"
         assert chunks[0]["limit_price"] == 99.00
         assert chunks[1]["limit_price"] == 100.00
         assert chunks[2]["limit_price"] == 98.50
 
     def test_zero_shares(self):
-        assert build_gap_capture_chunks(0, 99.0, 100.0, 98.5) == []
+        assert build_premarket_chunks(0, 99.0, 100.0, 98.5) == []
 
     def test_small_order_still_splits(self):
-        chunks = build_gap_capture_chunks(200, 99.00, 100.00, 98.50)
+        chunks = build_premarket_chunks(200, 99.00, 100.00, 98.50)
         total = sum(c["shares"] for c in chunks)
         assert total == 200
 

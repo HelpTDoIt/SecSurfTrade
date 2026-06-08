@@ -34,6 +34,7 @@ def _make_fill_entry(
         "ts": "2026-06-04T14:30:00+00:00",
         "event_type": "fill",
         "payload": {
+            "account": "test_account",
             "order_id": order_id,
             "symbol": symbol,
             "side": side,
@@ -114,79 +115,57 @@ def test_read_fills_collects_fill_payloads(tmp_path: Path):
 # ── aggregate_fills tests ────────────────────────────────────────────────────
 
 
-def test_aggregate_fills_sums_delta_same_symbol_side():
+def test_aggregate_fills_sums_delta_same_account_order():
     raw = [
-        {"symbol": "SYNTH1", "side": "SELL", "delta": 100.0, "limit_price": 50.00},
-        {"symbol": "SYNTH1", "side": "SELL", "delta": 40.0, "limit_price": 50.00},
+        {"account": "acc1", "order_id": "s1", "symbol": "SYNTH1", "side": "SELL", "delta": 100.0, "limit_price": 50.00},
+        {"account": "acc1", "order_id": "s1", "symbol": "SYNTH1", "side": "SELL", "delta": 40.0, "limit_price": 50.00},
     ]
     result = aggregate_fills(raw)
     assert len(result) == 1
     assert result[0]["symbol"] == "SYNTH1"
-    assert result[0]["side"] == "SELL"
+    assert result[0]["chunk_id"] == "s1"
     assert result[0]["qty"] == pytest.approx(140.0)
 
-
-def test_aggregate_fills_different_sides_are_separate():
+def test_aggregate_fills_different_orders_are_separate():
     raw = [
-        {"symbol": "SYNTH1", "side": "BUY", "delta": 50.0, "limit_price": 50.00},
-        {"symbol": "SYNTH1", "side": "SELL", "delta": 30.0, "limit_price": 51.00},
+        {"account": "acc1", "order_id": "b1", "symbol": "SYNTH1", "side": "BUY", "delta": 50.0, "limit_price": 50.00},
+        {"account": "acc1", "order_id": "s1", "symbol": "SYNTH1", "side": "SELL", "delta": 30.0, "limit_price": 51.00},
     ]
     result = aggregate_fills(raw)
     assert len(result) == 2
-    sides = {r["side"] for r in result}
-    assert sides == {"BUY", "SELL"}
 
-
-def test_aggregate_fills_price_is_most_recent():
-    """When a symbol+side has fills at differing prices, price = most recent."""
+def test_aggregate_fills_price_is_weighted_average():
     raw = [
-        {"symbol": "SYNTH1", "side": "BUY", "delta": 10.0, "limit_price": 100.00},
-        {"symbol": "SYNTH1", "side": "BUY", "delta": 5.0, "limit_price": 101.50},
+        {"account": "acc1", "order_id": "b1", "symbol": "SYNTH1", "side": "BUY", "delta": 10.0, "limit_price": 100.00},
+        {"account": "acc1", "order_id": "b1", "symbol": "SYNTH1", "side": "BUY", "delta": 5.0, "limit_price": 115.00},
     ]
+    # (10*100 + 5*115) / 15 = 1575 / 15 = 105.0
     result = aggregate_fills(raw)
     assert len(result) == 1
-    assert result[0]["price"] == pytest.approx(101.50)
-
-
-def test_aggregate_fills_prices_breakdown_preserved():
-    """prices[] must contain one entry per raw fill so no data is lost."""
-    raw = [
-        {"symbol": "SYNTH1", "side": "BUY", "delta": 10.0, "limit_price": 100.00},
-        {"symbol": "SYNTH1", "side": "BUY", "delta": 5.0, "limit_price": 101.50},
-    ]
-    result = aggregate_fills(raw)
-    prices = result[0]["prices"]
-    assert len(prices) == 2
-    assert prices[0] == {"qty": pytest.approx(10.0), "price": pytest.approx(100.00)}
-    assert prices[1] == {"qty": pytest.approx(5.0), "price": pytest.approx(101.50)}
-
+    assert result[0]["price"] == pytest.approx(105.0)
 
 def test_aggregate_fills_empty_input():
     result = aggregate_fills([])
     assert result == []
 
-
 def test_aggregate_fills_multiple_symbols():
     raw = [
-        {"symbol": "SYNTH1", "side": "SELL", "delta": 200.0, "limit_price": 62.39},
-        {"symbol": "SYNTH2", "side": "BUY", "delta": 10.0, "limit_price": 300.00},
-        {"symbol": "SYNTH1", "side": "SELL", "delta": 55.0, "limit_price": 62.37},
+        {"account": "acc1", "order_id": "s1", "symbol": "SYNTH1", "side": "SELL", "delta": 200.0, "limit_price": 60.00},
+        {"account": "acc1", "order_id": "b1", "symbol": "SYNTH2", "side": "BUY", "delta": 10.0, "limit_price": 300.00},
+        {"account": "acc1", "order_id": "s1", "symbol": "SYNTH1", "side": "SELL", "delta": 50.0, "limit_price": 70.00},
     ]
     result = aggregate_fills(raw)
-    # SYNTH1 SELL should be aggregated; SYNTH2 BUY stays separate
     assert len(result) == 2
     synth1 = next(r for r in result if r["symbol"] == "SYNTH1")
-    assert synth1["qty"] == pytest.approx(255.0)
-    assert synth1["price"] == pytest.approx(62.37)  # most recent
-    assert len(synth1["prices"]) == 2
+    assert synth1["qty"] == pytest.approx(250.0)
+    # (200*60 + 50*70) / 250 = (12000 + 3500)/250 = 15500/250 = 62.0
+    assert synth1["price"] == pytest.approx(62.0)
 
-
-# ── build_output tests ────────────────────────────────────────────────────────
-
+# "?"? build_output tests "?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?
 
 def test_build_output_schema_version():
     out = build_output([])
-    assert out["schema_version"] == "fills/1"
+    assert out["schema_version"] == "fills/1.0"
 
 
 def test_build_output_fills_list():
@@ -211,18 +190,20 @@ def test_cli_empty_journal_stdout(tmp_path: Path, capsys):
     journal = tmp_path / "journal.jsonl"
     journal.write_text("", encoding="utf-8")
 
-    main(["--journal", str(journal)])
+    main(["--journal", str(journal), "--out", "-"])
+
 
     captured = capsys.readouterr()
     parsed = json.loads(captured.out)
-    assert parsed["schema_version"] == "fills/1"
+    assert parsed["schema_version"] == "fills/1.0"
     assert parsed["fills"] == []
 
 
 def test_cli_missing_journal_stdout(tmp_path: Path, capsys):
     """Missing journal → empty fills, exits 0."""
     missing = tmp_path / "no_such_file.jsonl"
-    main(["--journal", str(missing)])
+    main(["--journal", str(missing), "--out", "-"])
+
     captured = capsys.readouterr()
     parsed = json.loads(captured.out)
     assert parsed["fills"] == []
@@ -242,20 +223,21 @@ def test_cli_fills_written_to_file(tmp_path: Path):
 
     assert out_file.exists()
     parsed = json.loads(out_file.read_text(encoding="utf-8"))
-    assert parsed["schema_version"] == "fills/1"
+    assert parsed["schema_version"] == "fills/1.0"
     assert len(parsed["fills"]) == 2
 
 
 def test_cli_aggregation_via_main(tmp_path: Path, capsys):
-    """Two fill rows for same symbol+side aggregate to one fill in output."""
+    """Two fill rows for same account+order_id aggregate to one fill in output."""
     journal = tmp_path / "journal.jsonl"
     lines = [
         _make_fill_entry("s1", "SYNTH1", "SELL", 1600.0, 62.39),
-        _make_fill_entry("s2", "SYNTH1", "SELL", 55.0, 62.37),
+        _make_fill_entry("s1", "SYNTH1", "SELL", 55.0, 62.37),
     ]
     _write_journal(journal, lines)
 
-    main(["--journal", str(journal)])
+    main(["--journal", str(journal), "--out", "-"])
+
 
     captured = capsys.readouterr()
     parsed = json.loads(captured.out)
@@ -264,8 +246,8 @@ def test_cli_aggregation_via_main(tmp_path: Path, capsys):
     assert f["symbol"] == "SYNTH1"
     assert f["side"] == "SELL"
     assert f["qty"] == pytest.approx(1655.0)
-    assert f["price"] == pytest.approx(62.37)
-    assert len(f["prices"]) == 2
+    assert f["price"] == pytest.approx(62.3893)
+
 
 
 def test_cli_subprocess_smoke(tmp_path: Path):
@@ -281,7 +263,7 @@ def test_cli_subprocess_smoke(tmp_path: Path):
         [
             sys.executable,
             "-m",
-            "fidelity_rebalancer.cli.export_fills",
+            "cli.export_fills",
             "--journal",
             str(journal),
             "--out",
@@ -294,5 +276,5 @@ def test_cli_subprocess_smoke(tmp_path: Path):
     assert result.returncode == 0, f"stderr: {result.stderr}"
     assert out_file.exists()
     parsed = json.loads(out_file.read_text(encoding="utf-8"))
-    assert parsed["schema_version"] == "fills/1"
+    assert parsed["schema_version"] == "fills/1.0"
     assert len(parsed["fills"]) == 1

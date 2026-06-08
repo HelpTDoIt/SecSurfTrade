@@ -10,6 +10,163 @@
         margin: 0;
         padding: 0;
       }
+
+      :root {
+        --bg-base: #0f1117;
+        --text-main: #e1e4e8;
+        --text-accent: #58a6ff;
+        --text-muted: #8b949e;
+        --bg-card: #161b22;
+        --border-main: #30363d;
+        --text-secondary: #c9d1d9;
+        --border-sub: #21262d;
+        --color-sell: #f85149;
+        --color-buy: #3fb950;
+        --color-filled: #58a6ff;
+        --color-partial: #d29922;
+        --bg-input: #0d1117;
+        --bg-btn-primary: #238636;
+        --border-btn: #484f58;
+        --bg-sell-light: #f8514922;
+        --bg-buy-light: #3fb95022;
+        --bg-hold-light: #8b949e22;
+        --bg-filled-light: #1f6feb22;
+        --bg-partial-light: #d2992222;
+        --bg-info-light: #1f6feb15;
+        --border-info: #1f6feb44;
+        --bg-err-light: #f8514915;
+        --border-err: #f8514944;
+      }
+      :root[data-theme="github"] {
+        --bg-base: #0d1117;
+        --text-main: #e1e4e8;
+        --text-accent: #58a6ff;
+        --text-muted: #8b949e;
+        --bg-card: #161b22;
+        --border-main: #30363d;
+        --text-secondary: #c9d1d9;
+        --border-sub: #21262d;
+        --color-sell: #f85149;
+        --color-buy: #3fb950;
+        --color-filled: #58a6ff;
+        --color-partial: #d29922;
+        --bg-input: #0d1117;
+        --bg-btn-primary: #238636;
+        --border-btn: #484f58;
+        --bg-sell-light: #f8514922;
+        --bg-buy-light: #3fb95022;
+        --bg-hold-light: #8b949e22;
+        --bg-filled-light: #1f6feb22;
+        --bg-partial-light: #d2992222;
+        --bg-info-light: #1f6feb15;
+        --border-info: #1f6feb44;
+        --bg-err-light: #f8514915;
+        --border-err: #f8514944;
+      }
+      :root[data-theme="vercel"] {
+        --bg-base: #000000;
+        --text-main: #ededed;
+        --text-accent: #0070f3;
+        --text-muted: #888888;
+        --bg-card: #111111;
+        --border-main: #333333;
+        --text-secondary: #a0a0a0;
+        --border-sub: #222222;
+        --color-sell: #e00000;
+        --color-buy: #0070f3;
+        --color-filled: #f5a623;
+        --color-partial: #f5a623;
+        --bg-input: #000000;
+        --bg-btn-primary: #0070f3;
+        --border-btn: #333333;
+        --bg-sell-light: rgba(224,0,0,0.2);
+        --bg-buy-light: rgba(0,112,243,0.2);
+        --bg-hold-light: rgba(136,136,136,0.2);
+        --bg-filled-light: rgba(245,166,35,0.2);
+        --bg-partial-light: rgba(245,166,35,0.2);
+        --bg-info-light: rgba(0,112,243,0.1);
+        --border-info: rgba(0,112,243,0.3);
+        --bg-err-light: rgba(224,0,0,0.1);
+        --border-err: rgba(224,0,0,0.3);
+      }
+      :root[data-theme="monokai"] {
+        --bg-base: #272822;
+        --text-main: #f8f8f2;
+        --text-accent: #fd971f;
+        --text-muted: #75715e;
+        --bg-card: #3e3d32;
+        --border-main: #75715e;
+        --text-secondary: #e6db74;
+        --border-sub: #49483e;
+        --color-sell: #f92672;
+        --color-buy: #a6e22e;
+        --color-filled: #66d9ef;
+        --color-partial: #fd971f;
+        --bg-input: #272822;
+        --bg-btn-primary: #a6e22e;
+        --border-btn: #75715e;
+        --bg-sell-light: rgba(249,38,114,0.2);
+        --bg-buy-light: rgba(166,226,46,0.2);
+        --bg-hold-light: rgba(117,113,94,0.2);
+        --bg-filled-light: rgba(102,217,239,0.2);
+        --bg-partial-light: rgba(253,151,31,0.2);
+        --bg-info-light: rgba(102,217,239,0.1);
+        --border-info: rgba(102,217,239,0.3);
+        --bg-err-light: rgba(249,38,114,0.1);
+        --border-err: rgba(249,38,114,0.3);
+      }
+      :root[data-theme="tokyonight"] {
+        --bg-base: #1a1b26;
+        --text-main: #c0caf5;
+        --text-accent: #7aa2f7;
+        --text-muted: #565f89;
+        --bg-card: #24283b;
+        --border-main: #414868;
+        --text-secondary: #a9b1d6;
+        --border-sub: #292e42;
+        --color-sell: #f7768e;
+        --color-buy: #9ece6a;
+        --color-filled: #7dcfff;
+        --color-partial: #e0af68;
+        --bg-input: #1a1b26;
+        --bg-btn-primary: #9ece6a;
+        --border-btn: #414868;
+        --bg-sell-light: rgba(247,118,142,0.2);
+        --bg-buy-light: rgba(158,206,106,0.2);
+        --bg-hold-light: rgba(86,95,137,0.2);
+        --bg-filled-light: rgba(125,207,255,0.2);
+        --bg-partial-light: rgba(224,175,104,0.2);
+        --bg-info-light: rgba(122,162,247,0.1);
+        --border-info: rgba(122,162,247,0.3);
+        --bg-err-light: rgba(247,118,142,0.1);
+        --border-err: rgba(247,118,142,0.3);
+      }
+      :root[data-theme="onedark"] {
+        --bg-base: #282c34;
+        --text-main: #abb2bf;
+        --text-accent: #61afef;
+        --text-muted: #5c6370;
+        --bg-card: #333842;
+        --border-main: #4b5263;
+        --text-secondary: #e5c07b;
+        --border-sub: #3e4451;
+        --color-sell: #e06c75;
+        --color-buy: #98c379;
+        --color-filled: #56b6c2;
+        --color-partial: #d19a66;
+        --bg-input: #282c34;
+        --bg-btn-primary: #98c379;
+        --border-btn: #4b5263;
+        --bg-sell-light: rgba(224,108,117,0.2);
+        --bg-buy-light: rgba(152,195,121,0.2);
+        --bg-hold-light: rgba(92,99,112,0.2);
+        --bg-filled-light: rgba(86,182,194,0.2);
+        --bg-partial-light: rgba(209,154,102,0.2);
+        --bg-info-light: rgba(97,175,239,0.1);
+        --border-info: rgba(97,175,239,0.3);
+        --bg-err-light: rgba(224,108,117,0.1);
+        --border-err: rgba(224,108,117,0.3);
+      }
       body {
         background: #0f1117;
         font-family:
@@ -41,7 +198,14 @@
       integrity="sha512-OG8Ewzlpr7HnTHwrXzN256M6xbPdDJdurFYIRh0vRHOeFsL0S9yIwHiWSA2kopUevhG/ta4qyVVc2hCRSJy2MQ=="
       crossorigin="anonymous"
     ></script>
-  </head>
+    <script>
+    // Apply saved theme on load
+    try {
+      const s = JSON.parse(localStorage.getItem('secsurf_calc_state_v1') || '{}');
+      if (s.theme) document.documentElement.setAttribute('data-theme', s.theme);
+    } catch (e) {}
+  </script>
+</head>
   <body>
     <div id="root"></div>
     <script type="text/babel">
@@ -139,7 +303,12 @@
             totalStratVal += positions[t].value;
           } else sPos[s] = { ticker: t || "", value: 0, quantity: 0, price: 0 };
         });
-        const spaxx = positions["SPAXX**"]?.value || 0;
+        let spaxx = 0;
+        Object.keys(positions).forEach(k => {
+          if (k.startsWith("SPAXX") || k.startsWith("FDRXX") || k.startsWith("FCASH") || k.startsWith("CORE") || k.toLowerCase().includes("cash")) {
+            spaxx += positions[k].value;
+          }
+        });
         // Effective cash = settled SPAXX + signed pending activity.
         // Negative pending = already-committed funds; positive = unsettled
         // incoming. Mirrors engine/calculator.py calc_trades.
@@ -309,34 +478,58 @@
           : "—";
       const roundTo100 = (n) => Math.round(n / 100) * 100;
 
+      // C-8: when a chunk's limit price has been overridden away from the
+      // engine's recommendation (origLimit), show the signed deviation and the
+      // recommended price — mirrors the TUI override diff (C-11) so an
+      // accidental fat-finger is obvious before the order is typed into ATP.
+      const OverrideBadge = ({ orig, limit }) => {
+        if (!orig || !(Math.abs(orig - limit) > 1e-5)) return null;
+        const delta = limit - orig;
+        const above = delta > 0;
+        return (
+          <div
+            style={{
+              fontSize: "10px",
+              color: "#d29922",
+              marginTop: "2px",
+              fontWeight: "bold",
+              textAlign: "right",
+            }}
+          >
+            {above ? "+" : "-"}${Math.abs(delta).toFixed(4)}{" "}
+            {above ? "above" : "below"} recommended ${orig.toFixed(4)}
+          </div>
+        );
+      };
+
       const S = {
         container: {
           fontFamily: "'Inter', -apple-system, sans-serif",
           maxWidth: 1400,
           margin: "0 auto",
           padding: 16,
-          background: "#0f1117",
-          color: "#e1e4e8",
+          background: "var(--bg-base)",
+          color: "var(--text-main)",
           minHeight: "100vh",
         },
         hdr: {
           fontSize: 20,
           fontWeight: 700,
-          color: "#58a6ff",
+          color: "var(--text-accent)",
           marginBottom: 4,
         },
-        sub: { fontSize: 13, color: "#8b949e", marginBottom: 16 },
+        sub: { fontSize: 13, color: "var(--text-muted)", marginBottom: 16 },
         card: {
-          background: "#161b22",
+          background: "var(--bg-card)",
           borderRadius: 8,
-          border: "1px solid #30363d",
+          border: "1px solid var(--border-main)",
           padding: 16,
           marginBottom: 12,
         },
         cT: {
           fontSize: 14,
           fontWeight: 600,
-          color: "#c9d1d9",
+          color: "var(--text-secondary)",
           marginBottom: 10,
         },
         tbl: { width: "100%", borderCollapse: "collapse", fontSize: 12 },
@@ -344,8 +537,8 @@
         th: {
           textAlign: "left",
           padding: "6px 8px",
-          borderBottom: "1px solid #30363d",
-          color: "#8b949e",
+          borderBottom: "1px solid var(--border-main)",
+          color: "var(--text-muted)",
           fontWeight: 500,
           fontSize: 11,
           textTransform: "uppercase",
@@ -355,8 +548,8 @@
         thr: {
           textAlign: "right",
           padding: "6px 8px",
-          borderBottom: "1px solid #30363d",
-          color: "#8b949e",
+          borderBottom: "1px solid var(--border-main)",
+          color: "var(--text-muted)",
           fontWeight: 500,
           fontSize: 11,
           textTransform: "uppercase",
@@ -365,23 +558,23 @@
         },
         td: {
           padding: "5px 8px",
-          borderBottom: "1px solid #21262d",
-          color: "#c9d1d9",
+          borderBottom: "1px solid var(--border-sub)",
+          color: "var(--text-secondary)",
           fontSize: 12,
           verticalAlign: "top",
         },
         tdr: {
           padding: "5px 8px",
-          borderBottom: "1px solid #21262d",
-          color: "#c9d1d9",
+          borderBottom: "1px solid var(--border-sub)",
+          color: "var(--text-secondary)",
           textAlign: "right",
           fontVariantNumeric: "tabular-nums",
           fontSize: 12,
           verticalAlign: "top",
         },
         sell: {
-          background: "#f8514922",
-          color: "#f85149",
+          background: "var(--bg-sell-light)",
+          color: "var(--color-sell)",
           padding: "2px 8px",
           borderRadius: 4,
           fontSize: 11,
@@ -389,8 +582,8 @@
           display: "inline-block",
         },
         buy: {
-          background: "#3fb95022",
-          color: "#3fb950",
+          background: "var(--bg-buy-light)",
+          color: "var(--color-buy)",
           padding: "2px 8px",
           borderRadius: 4,
           fontSize: 11,
@@ -398,8 +591,8 @@
           display: "inline-block",
         },
         holdB: {
-          background: "#8b949e22",
-          color: "#8b949e",
+          background: "var(--bg-hold-light)",
+          color: "var(--text-muted)",
           padding: "2px 8px",
           borderRadius: 4,
           fontSize: 11,
@@ -407,8 +600,8 @@
           display: "inline-block",
         },
         filledB: {
-          background: "#1f6feb22",
-          color: "#58a6ff",
+          background: "var(--bg-filled-light)",
+          color: "var(--text-accent)",
           padding: "2px 8px",
           borderRadius: 4,
           fontSize: 11,
@@ -416,8 +609,8 @@
           display: "inline-block",
         },
         partialB: {
-          background: "#d2992222",
-          color: "#d29922",
+          background: "var(--bg-partial-light)",
+          color: "var(--color-partial)",
           padding: "2px 8px",
           borderRadius: 4,
           fontSize: 11,
@@ -425,29 +618,29 @@
           display: "inline-block",
         },
         inp: {
-          background: "#0d1117",
-          border: "1px solid #30363d",
+          background: "var(--bg-input)",
+          border: "1px solid var(--border-main)",
           borderRadius: 4,
-          color: "#c9d1d9",
+          color: "var(--text-secondary)",
           padding: "4px 8px",
           fontSize: 12,
           width: 80,
         },
         inpSm: {
-          background: "#0d1117",
-          border: "1px solid #30363d",
+          background: "var(--bg-input)",
+          border: "1px solid var(--border-main)",
           borderRadius: 4,
-          color: "#c9d1d9",
+          color: "var(--text-secondary)",
           padding: "3px 6px",
           fontSize: 11,
           width: 70,
           boxSizing: "border-box",
         },
         ta: {
-          background: "#0d1117",
-          border: "1px solid #30363d",
+          background: "var(--bg-input)",
+          border: "1px solid var(--border-main)",
           borderRadius: 4,
-          color: "#c9d1d9",
+          color: "var(--text-secondary)",
           padding: 8,
           fontSize: 11,
           width: "100%",
@@ -457,7 +650,7 @@
           boxSizing: "border-box",
         },
         btn: {
-          background: "#238636",
+          background: "var(--bg-btn-primary)",
           color: "#fff",
           border: "none",
           borderRadius: 6,
@@ -467,9 +660,9 @@
           cursor: "pointer",
         },
         btn2: {
-          background: "#30363d",
-          color: "#c9d1d9",
-          border: "1px solid #484f58",
+          background: "var(--border-main)",
+          color: "var(--text-secondary)",
+          border: "1px solid var(--border-btn)",
           borderRadius: 6,
           padding: "5px 12px",
           fontSize: 11,
@@ -477,9 +670,9 @@
           cursor: "pointer",
         },
         btnSm: {
-          background: "#30363d",
-          color: "#c9d1d9",
-          border: "1px solid #484f58",
+          background: "var(--border-main)",
+          color: "var(--text-secondary)",
+          border: "1px solid var(--border-btn)",
           borderRadius: 4,
           padding: "3px 8px",
           fontSize: 10,
@@ -487,9 +680,9 @@
           cursor: "pointer",
         },
         btnDel: {
-          background: "#da363322",
-          color: "#f85149",
-          border: "1px solid #f8514944",
+          background: "var(--bg-sell-light)",
+          color: "var(--color-sell)",
+          border: "1px solid var(--border-err)",
           borderRadius: 4,
           padding: "2px 6px",
           fontSize: 10,
@@ -509,76 +702,76 @@
           display: "flex",
           justifyContent: "space-between",
           padding: "4px 0",
-          borderBottom: "1px solid #21262d",
+          borderBottom: "1px solid var(--border-sub)",
         },
-        mL: { color: "#8b949e", fontSize: 12 },
+        mL: { color: "var(--text-muted)", fontSize: 12 },
         mV: {
-          color: "#c9d1d9",
+          color: "var(--text-secondary)",
           fontSize: 12,
           fontWeight: 600,
           fontVariantNumeric: "tabular-nums",
         },
         info: {
-          background: "#1f6feb15",
-          border: "1px solid #1f6feb44",
+          background: "var(--bg-info-light)",
+          border: "1px solid var(--border-info)",
           borderRadius: 6,
           padding: 10,
           fontSize: 12,
-          color: "#58a6ff",
+          color: "var(--text-accent)",
           marginBottom: 8,
         },
         err: {
-          background: "#f8514915",
-          border: "1px solid #f8514944",
+          background: "var(--bg-err-light)",
+          border: "1px solid var(--border-err)",
           borderRadius: 6,
           padding: 10,
           fontSize: 12,
-          color: "#f85149",
+          color: "var(--color-sell)",
           marginBottom: 8,
         },
         errSm: {
-          background: "#f8514915",
-          border: "1px solid #f8514944",
+          background: "var(--bg-err-light)",
+          border: "1px solid var(--border-err)",
           borderRadius: 4,
           padding: "4px 8px",
           fontSize: 10,
-          color: "#f85149",
+          color: "var(--color-sell)",
           marginTop: 4,
         },
         tabs: {
           display: "flex",
           gap: 0,
-          borderBottom: "1px solid #30363d",
+          borderBottom: "1px solid var(--border-main)",
           marginBottom: 16,
         },
         tab: (a) => ({
           padding: "8px 16px",
           fontSize: 13,
           fontWeight: a ? 600 : 400,
-          color: a ? "#58a6ff" : "#8b949e",
+          color: a ? "var(--text-accent)" : "var(--text-muted)",
           cursor: "pointer",
           background: "none",
           border: "none",
-          borderBottom: a ? "2px solid #58a6ff" : "2px solid transparent",
+          borderBottom: a ? "2px solid var(--text-accent)" : "2px solid transparent",
         }),
         ph: (a) => ({
           display: "flex",
           alignItems: "center",
           gap: 8,
           padding: "6px 12px",
-          background: a ? "#1f6feb15" : "#161b22",
+          background: a ? "var(--bg-info-light)" : "var(--bg-card)",
           borderRadius: 6,
           marginBottom: 6,
-          border: a ? "1px solid #1f6feb44" : "1px solid #30363d",
+          border: a ? "1px solid var(--border-info)" : "1px solid var(--border-main)",
         }),
         secH: {
           fontSize: 11,
           fontWeight: 600,
-          color: "#8b949e",
+          color: "var(--text-muted)",
           textTransform: "uppercase",
           letterSpacing: "0.5px",
           padding: "6px 8px 4px",
-          borderBottom: "1px solid #30363d",
+          borderBottom: "1px solid var(--border-main)",
         },
         sumBar: {
           display: "flex",
@@ -722,6 +915,23 @@
       // the user-entered slices under this key and restore them on mount.
       const SAVE_KEY = "secsurf_calc_state_v1";
 
+
+      function EntryTabKeyHandler({ rounds, ri, isSell, setEntryRound, entryRound }) {
+        React.useEffect(() => {
+          const handleKeyDown = (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (e.key === 'j') {
+              setEntryRound(r => Math.min(rounds.length - 1, r + 1));
+            } else if (e.key === 'k') {
+              setEntryRound(r => Math.max(0, r - 1));
+            }
+          };
+          window.addEventListener('keydown', handleKeyDown);
+          return () => window.removeEventListener('keydown', handleKeyDown);
+        }, [rounds.length, entryRound, ri, isSell]);
+        return null;
+      }
+
       function App() {
         // Read the saved blob exactly once (lazy, via a ref) so the useState
         // initializers below can seed from it without a flash or effect ordering
@@ -778,6 +988,7 @@
         const SAVED = savedRef.current;
 
         const [tab, setTab] = useState(SAVED.tab ?? "setup");
+        const [theme, setTheme] = useState(SAVED.theme || "default");
         const [csv, setCsv] = useState(
           SAVED.csv ?? { roth: "", rollover: "", tod: "" },
         );
@@ -793,6 +1004,7 @@
         const [importedChunks, setImportedChunks] = useState(
           SAVED.importedChunks ?? null,
         );
+        const [importedReasoning, setImportedReasoning] = useState({});
         const importFileRef = useRef(null);
         const importStateRef = useRef(null);
         const importFillsJsonRef = useRef(null);
@@ -1127,6 +1339,7 @@
               idx: t.idx,
               shares: shs,
               limitPrice: lim,
+              origLimit: t.origLimit,
               cost: shs * lim,
             });
             left = Math.max(0, left - shs);
@@ -1169,7 +1382,7 @@
             if (shs * lim > budget) shs = Math.floor(budget / lim);
             if (shs <= 0) break;
             const cost = shs * lim;
-            ch.push({ idx: t.idx, shares: shs, limitPrice: lim, cost });
+            ch.push({ idx: t.idx, shares: shs, limitPrice: lim, origLimit: t.origLimit, cost });
             budget = Math.max(0, budget - cost);
           }
           if (budget > 0.01) {
@@ -1300,7 +1513,7 @@
               </div>
               {filled.qty > 0 && (
                 <div
-                  style={{ fontSize: 10, color: "#8b949e", padding: "2px 8px" }}
+                  style={{ fontSize: 10, color: "var(--text-muted)", padding: "2px 8px" }}
                 >
                   {full ? (
                     <span style={S.filledB}>✓ FILLED</span>
@@ -1345,7 +1558,7 @@
             <div
               style={{
                 background: "#0d111722",
-                border: "1px solid #21262d",
+                border: "1px solid var(--border-sub)",
                 borderRadius: 6,
                 marginBottom: 8,
                 overflow: "hidden",
@@ -1405,6 +1618,10 @@
                                   setChkLim(acct, strategy, "sell", ch.idx, v)
                                 }
                               />
+                              <OverrideBadge
+                                orig={ch.origLimit}
+                                limit={ch.limitPrice}
+                              />
                             </td>
                             <td style={S.tdr}>{fmt(ch.cost)}</td>
                           </tr>
@@ -1426,7 +1643,7 @@
                     </table>
                   ) : (
                     <div
-                      style={{ padding: "8px", fontSize: 11, color: "#3fb950" }}
+                      style={{ padding: "8px", fontSize: 11, color: "var(--color-buy)" }}
                     >
                       ✓ All shares sold
                     </div>
@@ -1436,7 +1653,7 @@
                   style={{
                     flex: 2,
                     minWidth: 200,
-                    borderLeft: "1px solid #30363d",
+                    borderLeft: "1px solid var(--border-main)",
                   }}
                 >
                   <div style={S.secH}>Fills</div>
@@ -1470,7 +1687,7 @@
             <div
               style={{
                 background: overAlloc ? "#d2992210" : "#0d111722",
-                border: "1px solid #21262d",
+                border: "1px solid var(--border-sub)",
                 borderRadius: 6,
                 marginBottom: 8,
                 overflow: "hidden",
@@ -1534,6 +1751,10 @@
                                   setChkLim(acct, strategy, "buy", ch.idx, v)
                                 }
                               />
+                              <OverrideBadge
+                                orig={ch.origLimit}
+                                limit={ch.limitPrice}
+                              />
                             </td>
                             <td style={S.tdr}>{fmt(ch.cost)}</td>
                           </tr>
@@ -1555,7 +1776,7 @@
                     </table>
                   ) : (
                     <div
-                      style={{ padding: "8px", fontSize: 11, color: "#3fb950" }}
+                      style={{ padding: "8px", fontSize: 11, color: "var(--color-buy)" }}
                     >
                       ✓ All orders filled
                     </div>
@@ -1565,7 +1786,7 @@
                   style={{
                     flex: 2,
                     minWidth: 200,
-                    borderLeft: "1px solid #30363d",
+                    borderLeft: "1px solid var(--border-main)",
                   }}
                 >
                   <div style={S.secH}>Fills</div>
@@ -1658,6 +1879,7 @@
                   idx: c.idx,
                   shares: c.shares,
                   limitPrice: c.limit_price,
+                  origLimit: c.original_limit_price !== undefined && c.original_limit_price !== null ? c.original_limit_price : c.limit_price,
                   cost: c.cost,
                 });
                 ((impLimits[c.account] ||= {})[key] ||= {})[c.idx] =
@@ -1665,6 +1887,10 @@
               });
             };
             if (state.computed) {
+              const reasons = {};
+              (state.computed.sell_strategies || []).forEach(s => reasons[`sell:${s.account}:${s.strategy}`] = s.reasoning);
+              (state.computed.buy_strategies || []).forEach(b => reasons[`buy:${b.account}:${b.strategy}`] = b.reasoning);
+              setImportedReasoning(reasons);
               ingest(state.computed.sell_chunks, "sell");
               ingest(state.computed.buy_chunks, "buy");
             }
@@ -1768,17 +1994,23 @@
           reader.readAsText(file);
         };
 
-        const exportState = () => {
-          if (!calculated) return;
+        // Pure builder for the rebalancer state payload (schema 1.0).  Shared by
+        // the manual "Export State" download and the B-15 live WS broadcast, so
+        // both emit byte-for-byte the same shape.  Returns null until calculated.
+        const buildStatePayload = () => {
+          if (!calculated) return null;
           const ts = new Date();
-          const pad = (n) => String(n).padStart(2, "0");
-          const filename = `calc_export_${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}.json`;
 
           const accountInputs = Object.entries(ACCOUNTS_CONFIG)
             .filter(([n]) => parsed[n])
             .map(([n, cfg]) => {
               const pos = parsed[n].positions;
-              const spaxx = pos["SPAXX**"]?.value || 0;
+              let spaxx = 0;
+              Object.keys(pos).forEach(k => {
+                if (k.startsWith("SPAXX") || k.startsWith("FDRXX") || k.startsWith("FCASH") || k.startsWith("CORE") || k.toLowerCase().includes("cash")) {
+                  spaxx += pos[k].value;
+                }
+              });
               return {
                 name: n,
                 type: cfg.type,
@@ -1896,7 +2128,7 @@
             });
           });
 
-          const state = {
+          return {
             schema_version: "1.0",
             generated_at: ts.toISOString(),
             generator: "react_calc",
@@ -1924,7 +2156,14 @@
               drift: {},
             },
           };
+        };
 
+        const exportState = () => {
+          const state = buildStatePayload();
+          if (!state) return;
+          const ts = new Date();
+          const pad = (n) => String(n).padStart(2, "0");
+          const filename = `calc_export_${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}.json`;
           const blob = new Blob([JSON.stringify(state, null, 2)], {
             type: "application/json",
           });
@@ -1935,6 +2174,129 @@
           a.click();
           URL.revokeObjectURL(url);
         };
+
+        // ── B-15: live state-sync with the local relay hub ──────────────────
+        // Loopback only (ws://127.0.0.1:7825).  Broadcast *state JSON* when the
+        // user edits and apply state pushed by other clients (a second tab, or a
+        // future TUI).  There is NO order/command channel — pure state relay, and
+        // the manual Import/Export buttons remain as a fallback.
+        const WS_SYNC_URL = "ws://127.0.0.1:7825";
+        const wsRef = useRef(null);
+        const wsReconnectRef = useRef(null);
+        // Echo guard: the single render caused by applying an inbound state must
+        // not re-broadcast it back out.
+        const wsSuppressSendRef = useRef(false);
+        const applyStateRef = useRef(applyImportedState);
+        const buildPayloadRef = useRef(buildStatePayload);
+        const [wsStatus, setWsStatus] = useState("connecting"); // connecting|connected|reconnecting
+
+        // Keep the refs pointing at the latest closures (they capture live state)
+        // so the long-lived socket handlers always see current data.
+        useEffect(() => {
+          applyStateRef.current = applyImportedState;
+          buildPayloadRef.current = buildStatePayload;
+        });
+
+        // Open once on mount; auto-reconnect with capped exponential backoff.
+        useEffect(() => {
+          let stopped = false;
+          let attempt = 0;
+          const schedule = () => {
+            if (stopped) return;
+            setWsStatus("reconnecting");
+            const delay = Math.min(1000 * 2 ** attempt, 15000);
+            attempt += 1;
+            wsReconnectRef.current = setTimeout(open, delay);
+          };
+          const open = () => {
+            if (stopped) return;
+            let ws;
+            try {
+              ws = new WebSocket(WS_SYNC_URL);
+            } catch (e) {
+              schedule();
+              return;
+            }
+            wsRef.current = ws;
+            ws.onopen = () => {
+              attempt = 0;
+              setWsStatus("connected");
+            };
+            ws.onmessage = (ev) => {
+              let msg;
+              try {
+                msg = JSON.parse(ev.data);
+              } catch (e) {
+                return; // ignore non-JSON frames
+              }
+              if (!msg || msg.type !== "state" || !msg.state) return;
+              if (msg.origin === "browser") return; // ignore frames of our own class
+              wsSuppressSendRef.current = true;
+              // Legacy ReactDOM.render mount → React does not auto-batch outside
+              // its own events, so batch the apply into a single render (one
+              // outbound-effect run for the echo guard to consume).
+              ReactDOM.unstable_batchedUpdates(() => {
+                try {
+                  applyStateRef.current(msg.state);
+                } catch (e) {
+                  wsSuppressSendRef.current = false; // apply failed → nothing to suppress
+                }
+              });
+            };
+            ws.onclose = () => {
+              if (wsRef.current === ws) wsRef.current = null;
+              schedule();
+            };
+            ws.onerror = () => {
+              try {
+                ws.close();
+              } catch (e) {}
+            };
+          };
+          open();
+          return () => {
+            stopped = true;
+            clearTimeout(wsReconnectRef.current);
+            const ws = wsRef.current;
+            wsRef.current = null;
+            if (ws) {
+              ws.onclose = null; // intentional teardown — do not reconnect
+              try {
+                ws.close();
+              } catch (e) {}
+            }
+          };
+        }, []);
+
+        // Broadcast local edits, debounced.  Skip the one cycle an inbound apply
+        // triggers (echo guard); no-op until the socket is open.
+        useEffect(() => {
+          if (!calculated) return;
+          if (wsSuppressSendRef.current) {
+            wsSuppressSendRef.current = false;
+            return;
+          }
+          const t = setTimeout(() => {
+            const ws = wsRef.current;
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const payload = buildPayloadRef.current();
+            if (!payload) return;
+            try {
+              ws.send(
+                JSON.stringify({
+                  type: "state",
+                  state: payload,
+                  origin: "browser",
+                  ts: new Date().toISOString(),
+                }),
+              );
+            } catch (e) {}
+          }, 400);
+          return () => clearTimeout(t);
+          // NB: `fills` is intentionally excluded — it is not part of the synced
+          // payload (applyImportedState resets it), so broadcasting on a fill
+          // edit would push an identical state that wipes other tabs' fills.
+        }, [calculated, chunkLimits, signals, importedPositions, closes]);
 
         const exportTrades = () => {
           if (!calculated) return;
@@ -2062,13 +2424,33 @@
               throw new Error('Not a valid fills file (expected schema_version "fills/...").');
             const docFills = doc.fills || [];
 
-            const orderRows = [];
+            const chunkMap = {}; // "acct:chunk_id" -> { strategy, side }
+            let sc = 0;
+            let bc = 0;
             Object.entries(results).forEach(([acct, res]) => {
               (res.sells || []).forEach((sell) => {
-                orderRows.push({ acct, strategy: sell.strategy, side: "sell", ticker: sell.ticker });
+                const chunks = buildSellChunks(
+                  Math.max(0, sell.quantity),
+                  sell.limitPrice,
+                  acct,
+                  sell.strategy,
+                );
+                chunks.forEach((ch) => {
+                  sc++;
+                  chunkMap[`${acct}:s${sc}`] = { strategy: sell.strategy, side: "sell" };
+                });
               });
               (res.buys || []).forEach((buy) => {
-                orderRows.push({ acct, strategy: buy.strategy, side: "buy", ticker: buy.ticker });
+                const chunks = buildBuyChunks(
+                  buy.dollarTarget,
+                  buy.limitPrice,
+                  acct,
+                  buy.strategy,
+                );
+                chunks.forEach((ch) => {
+                  bc++;
+                  chunkMap[`${acct}:b${bc}`] = { strategy: buy.strategy, side: "buy" };
+                });
               });
             });
 
@@ -2076,19 +2458,16 @@
             const unmatched = [];
 
             docFills.forEach((fill) => {
-              const fillSymbol = (fill.symbol || "").toUpperCase();
-              const fillSide = (fill.side || "").toLowerCase();
+              const acct = fill.account;
+              const chunkId = fill.chunk_id;
               const fillQty = fill.qty || 0;
               const fillPrice = fill.price || 0;
+              const fillSymbol = (fill.symbol || "").toUpperCase();
+              const fillSide = (fill.side || "").toUpperCase();
 
-              const matches = orderRows.filter(
-                (r) =>
-                  r.ticker.toUpperCase() === fillSymbol &&
-                  r.side === fillSide,
-              );
-
-              if (matches.length === 1) {
-                const { acct, strategy, side } = matches[0];
+              const mapping = chunkMap[`${acct}:${chunkId}`];
+              if (mapping) {
+                const { strategy, side } = mapping;
                 if (!newFills[acct]) newFills[acct] = {};
                 if (!newFills[acct][strategy])
                   newFills[acct][strategy] = { sells: [], buys: [] };
@@ -2100,11 +2479,12 @@
                 });
               } else {
                 unmatched.push({
-                  symbol: fillSymbol,
-                  side: fillSide,
+                  account: acct,
+                  chunk_id: chunkId,
                   qty: fillQty,
                   price: fillPrice,
-                  matchCount: matches.length,
+                  symbol: fillSymbol,
+                  side: fillSide,
                 });
               }
             });
@@ -2114,9 +2494,8 @@
             if (unmatched.length > 0) {
               const lines = unmatched.map(
                 (u) =>
-                  `${u.symbol} ${u.side.toUpperCase()} ${u.qty}@${u.price}` +
-                  (u.matchCount === 0 ? " (no matching order)" : ` (${u.matchCount} ambiguous matches)`),
-              );
+                  `${u.symbol} ${u.side} ${u.qty}@${u.price} (Account: ${u.account}, Chunk: ${u.chunk_id} - no matching order)`
+                );
               setFillsImportBanner({
                 ok: false,
                 message: `${unmatched.length} fill(s) need manual placement:\n` + lines.join("\n"),
@@ -2128,7 +2507,7 @@
               });
             }
           },
-          [results, fills],
+          [results, fills, buildSellChunks, buildBuyChunks],
         );
 
         const importFillsFromJSON = (e) => {
@@ -2210,7 +2589,7 @@
                         marginBottom: 4,
                       }}
                     >
-                      <div style={{ fontSize: 12, color: "#8b949e" }}>{l}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{l}</div>
                       <button
                         style={S.btnSm}
                         onClick={() => ref.current?.click()}
@@ -2243,7 +2622,7 @@
                     />
                     {parsed[l] && (
                       <div
-                        style={{ color: "#3fb950", fontSize: 11, marginTop: 2 }}
+                        style={{ color: "var(--color-buy)", fontSize: 11, marginTop: 2 }}
                       >
                         ✓ {Object.keys(parsed[l].positions).length} positions
                       </div>
@@ -2278,7 +2657,7 @@
                     return (
                       <tr key={s}>
                         <td style={{ ...S.td, fontWeight: 700 }}>{s}</td>
-                        <td style={{ ...S.td, fontSize: 10, color: "#8b949e" }}>
+                        <td style={{ ...S.td, fontSize: 10, color: "var(--text-muted)" }}>
                           {a}
                         </td>
                         <td style={S.td}>
@@ -2300,7 +2679,7 @@
                           <input
                             style={{
                               ...S.inp,
-                              borderColor: tr ? "#f85149" : "#30363d",
+                              borderColor: tr ? "var(--color-sell)" : "var(--border-main)",
                             }}
                             value={signals[s]?.new || ""}
                             onChange={(e) =>
@@ -2461,7 +2840,38 @@
                   <div style={S.cT} style={{ margin: 0 }}>
                     Trade Summary
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span
+                      title={`Live state sync (${WS_SYNC_URL}): ${wsStatus}`}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: "var(--text-muted)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          background:
+                            wsStatus === "connected"
+                              ? "var(--color-buy)"
+                              : wsStatus === "reconnecting"
+                                ? "#d29922"
+                                : "var(--text-muted)",
+                        }}
+                      />
+                      {wsStatus === "connected"
+                        ? "Sync on"
+                        : wsStatus === "reconnecting"
+                          ? "Reconnecting…"
+                          : "Connecting…"}
+                    </span>
                     <input
                       ref={importFileRef}
                       type="file"
@@ -2491,7 +2901,7 @@
                     <button
                       style={{
                         ...S.btn2,
-                        color: "#58a6ff",
+                        color: "var(--text-accent)",
                         borderColor: "#1f6feb",
                       }}
                       onClick={exportTrades}
@@ -2501,8 +2911,8 @@
                     <button
                       style={{
                         ...S.btn2,
-                        color: "#3fb950",
-                        borderColor: "#238636",
+                        color: "var(--color-buy)",
+                        borderColor: "var(--bg-btn-primary)",
                       }}
                       onClick={exportState}
                     >
@@ -2516,10 +2926,10 @@
                       margin: "8px 0",
                       padding: "10px 14px",
                       background: fillsImportBanner.ok ? "#0d2818" : "#3d1f00",
-                      border: `1px solid ${fillsImportBanner.ok ? "#238636" : "#9e6a03"}`,
+                      border: `1px solid ${fillsImportBanner.ok ? "var(--bg-btn-primary)" : "#9e6a03"}`,
                       borderRadius: 6,
                       fontSize: 12,
-                      color: fillsImportBanner.ok ? "#3fb950" : "#e3b341",
+                      color: fillsImportBanner.ok ? "var(--color-buy)" : "#e3b341",
                       whiteSpace: "pre-wrap",
                       display: "flex",
                       justifyContent: "space-between",
@@ -2544,7 +2954,7 @@
                     </div>
                     <div style={S.met}>
                       <span style={S.mL}>Signals</span>
-                      <span style={{ ...S.mV, color: "#f85149" }}>
+                      <span style={{ ...S.mV, color: "var(--color-sell)" }}>
                         {tradingS
                           .map((s) => `${signals[s].current}→${signals[s].new}`)
                           .join(", ") || "None"}
@@ -2561,8 +2971,8 @@
                             <span
                               style={{
                                 ...S.tag,
-                                background: "#1f6feb22",
-                                color: "#58a6ff",
+                                background: "var(--bg-filled-light)",
+                                color: "var(--text-accent)",
                               }}
                             >
                               REBAL
@@ -2605,7 +3015,7 @@
                         style={{
                           fontSize: 14,
                           fontWeight: 600,
-                          color: "#c9d1d9",
+                          color: "var(--text-secondary)",
                         }}
                       >
                         {acct}
@@ -2613,8 +3023,8 @@
                           <span
                             style={{
                               ...S.tag,
-                              background: "#da363322",
-                              color: "#f85149",
+                              background: "var(--bg-sell-light)",
+                              color: "var(--color-sell)",
                             }}
                           >
                             MARGIN
@@ -2624,15 +3034,15 @@
                           <span
                             style={{
                               ...S.tag,
-                              background: "#d2992222",
-                              color: "#d29922",
+                              background: "var(--bg-partial-light)",
+                              color: "var(--color-partial)",
                             }}
                           >
                             LIVE RECALC
                           </span>
                         )}
                       </div>
-                      <div style={{ fontSize: 11, color: "#8b949e" }}>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
                         Pool: {fmt(res.totalPool)} | Cash: {fmt(res.deplCash)}
                         {(parsed[acct]?.pendingActivity || 0) !== 0 && (
                           <> | Pending: {fmt(parsed[acct].pendingActivity)}</>
@@ -2654,7 +3064,7 @@
                               width: 8,
                               height: 8,
                               borderRadius: "50%",
-                              background: "#f85149",
+                              background: "var(--color-sell)",
                               display: "inline-block",
                             }}
                           />
@@ -2662,7 +3072,7 @@
                             style={{
                               fontSize: 12,
                               fontWeight: 600,
-                              color: "#f85149",
+                              color: "var(--color-sell)",
                             }}
                           >
                             {isTOD ? "SELLS" : "PHASE 1: SELLS"}
@@ -2707,7 +3117,7 @@
                                       ...S.tdr,
                                       color:
                                         filled.proceeds > 0
-                                          ? "#c9d1d9"
+                                          ? "var(--text-secondary)"
                                           : "#484f58",
                                       fontWeight: 600,
                                     }}
@@ -2720,7 +3130,7 @@
                                     style={{
                                       ...S.tdr,
                                       color:
-                                        filled.qty > 0 ? "#c9d1d9" : "#484f58",
+                                        filled.qty > 0 ? "var(--text-secondary)" : "#484f58",
                                     }}
                                   >
                                     {filled.qty > 0 ? fmt(filled.avg) : "—"}
@@ -2729,7 +3139,7 @@
                                     style={{
                                       ...S.tdr,
                                       color:
-                                        filled.qty > 0 ? "#c9d1d9" : "#484f58",
+                                        filled.qty > 0 ? "var(--text-secondary)" : "#484f58",
                                     }}
                                   >
                                     {filled.qty > 0 ? fmtSh(filled.qty) : "—"}
@@ -2740,7 +3150,7 @@
                                       fontWeight: 700,
                                       fontSize: 13,
                                       color:
-                                        remSh > 0.01 ? "#d29922" : "#3fb950",
+                                        remSh > 0.01 ? "var(--color-partial)" : "var(--color-buy)",
                                     }}
                                   >
                                     {fmtSh(remSh)}{" "}
@@ -2748,7 +3158,7 @@
                                       style={{
                                         fontSize: 10,
                                         fontWeight: 400,
-                                        color: "#8b949e",
+                                        color: "var(--text-muted)",
                                       }}
                                     >
                                       of {fmtSh(sell.quantity)}
@@ -2792,7 +3202,7 @@
                                 width: 8,
                                 height: 8,
                                 borderRadius: "50%",
-                                background: "#3fb950",
+                                background: "var(--color-buy)",
                                 display: "inline-block",
                               }}
                             />
@@ -2800,54 +3210,54 @@
                               style={{
                                 fontSize: 12,
                                 fontWeight: 600,
-                                color: "#3fb950",
+                                color: "var(--color-buy)",
                               }}
                             >
                               {isTOD ? "BUYS" : "PHASE 2: BUYS"}
                             </span>
                             {eff.isLive && (
-                              <span style={{ fontSize: 10, color: "#d29922" }}>
+                              <span style={{ fontSize: 10, color: "var(--color-partial)" }}>
                                 Live recalc
                               </span>
                             )}
                           </div>
                           <div style={S.sumBar}>
-                            <span style={{ color: "#8b949e" }}>
+                            <span style={{ color: "var(--text-muted)" }}>
                               Est. Sells{" "}
-                              <span style={{ color: "#c9d1d9" }}>
+                              <span style={{ color: "var(--text-secondary)" }}>
                                 {fmt(res.estSell)}
                               </span>
                             </span>
                             {sellFunds > 0 && (
-                              <span style={{ color: "#8b949e" }}>
+                              <span style={{ color: "var(--text-muted)" }}>
                                 Funds{" "}
-                                <span style={{ color: "#d29922" }}>
+                                <span style={{ color: "var(--color-partial)" }}>
                                   {fmt(sellFunds)}
                                 </span>
                               </span>
                             )}
-                            <span style={{ color: "#8b949e" }}>
+                            <span style={{ color: "var(--text-muted)" }}>
                               Budget{" "}
-                              <span style={{ color: "#58a6ff" }}>
+                              <span style={{ color: "var(--text-accent)" }}>
                                 {fmt(budget)}
                               </span>
                             </span>
                             {totBuyFilled > 0 && (
-                              <span style={{ color: "#8b949e" }}>
+                              <span style={{ color: "var(--text-muted)" }}>
                                 Bought{" "}
-                                <span style={{ color: "#3fb950" }}>
+                                <span style={{ color: "var(--color-buy)" }}>
                                   {fmt(totBuyFilled)}
                                 </span>
                               </span>
                             )}
-                            <span style={{ color: "#8b949e" }}>
+                            <span style={{ color: "var(--text-muted)" }}>
                               Unused{" "}
                               <span
                                 style={{
                                   color:
                                     budget - totBuyFilled > 1
-                                      ? "#d29922"
-                                      : "#3fb950",
+                                      ? "var(--color-partial)"
+                                      : "var(--color-buy)",
                                 }}
                               >
                                 {fmt(budget - totBuyFilled)}
@@ -2891,8 +3301,8 @@
                                       <span
                                         style={{
                                           ...S.tag,
-                                          background: "#1f6feb22",
-                                          color: "#58a6ff",
+                                          background: "var(--bg-filled-light)",
+                                          color: "var(--text-accent)",
                                         }}
                                       >
                                         REBAL
@@ -2903,7 +3313,7 @@
                                         style={{
                                           ...S.tag,
                                           background: "#d2992233",
-                                          color: "#d29922",
+                                          color: "var(--color-partial)",
                                         }}
                                       >
                                         OVER
@@ -2918,7 +3328,7 @@
                                       ...S.tdr,
                                       color:
                                         buy.filledProceeds > 0
-                                          ? "#3fb950"
+                                          ? "var(--color-buy)"
                                           : "#484f58",
                                       fontWeight: 600,
                                     }}
@@ -2932,7 +3342,7 @@
                                       ...S.tdr,
                                       color:
                                         buy.filledQty > 0
-                                          ? "#3fb950"
+                                          ? "var(--color-buy)"
                                           : "#484f58",
                                     }}
                                   >
@@ -2945,7 +3355,7 @@
                                       ...S.tdr,
                                       color:
                                         buy.filledQty > 0
-                                          ? "#3fb950"
+                                          ? "var(--color-buy)"
                                           : "#484f58",
                                     }}
                                   >
@@ -2960,10 +3370,10 @@
                                       fontSize: 13,
                                       color:
                                         buy.remDollars < -0.01
-                                          ? "#f85149"
+                                          ? "var(--color-sell)"
                                           : buy.remDollars > 0.01
-                                            ? "#d29922"
-                                            : "#3fb950",
+                                            ? "var(--color-partial)"
+                                            : "var(--color-buy)",
                                     }}
                                   >
                                     {fmt(buy.remDollars)}{" "}
@@ -2971,7 +3381,7 @@
                                       style={{
                                         fontSize: 10,
                                         fontWeight: 400,
-                                        color: "#8b949e",
+                                        color: "var(--text-muted)",
                                       }}
                                     >
                                       of {fmt(buy.dollarTarget)}
@@ -3137,8 +3547,8 @@
                                   <span
                                     style={{
                                       ...S.tag,
-                                      background: "#f8514922",
-                                      color: "#f85149",
+                                      background: "var(--bg-sell-light)",
+                                      color: "var(--color-sell)",
                                     }}
                                   >
                                     {signals[s].current}→{signals[s].new}
@@ -3152,7 +3562,7 @@
                                 style={{
                                   ...S.tdr,
                                   color:
-                                    Math.abs(pD) > 0.02 ? "#f85149" : "#3fb950",
+                                    Math.abs(pD) > 0.02 ? "var(--color-sell)" : "var(--color-buy)",
                                 }}
                               >
                                 {pD > 0 ? "+" : ""}
@@ -3163,7 +3573,7 @@
                               <td
                                 style={{
                                   ...S.tdr,
-                                  color: hasAct ? "#58a6ff" : "#484f58",
+                                  color: hasAct ? "var(--text-accent)" : "#484f58",
                                   fontWeight: 700,
                                 }}
                               >
@@ -3172,7 +3582,7 @@
                               <td
                                 style={{
                                   ...S.tdr,
-                                  color: hasAct ? "#58a6ff" : "#484f58",
+                                  color: hasAct ? "var(--text-accent)" : "#484f58",
                                   fontWeight: 700,
                                 }}
                               >
@@ -3184,8 +3594,8 @@
                                   color: !hasAct
                                     ? "#484f58"
                                     : Math.abs(aD) > 0.02
-                                      ? "#f85149"
-                                      : "#3fb950",
+                                      ? "var(--color-sell)"
+                                      : "var(--color-buy)",
                                   fontWeight: 700,
                                 }}
                               >
@@ -3197,7 +3607,7 @@
                                 style={{
                                   ...S.td,
                                   fontWeight: 700,
-                                  color: "#58a6ff",
+                                  color: "var(--text-accent)",
                                 }}
                               >
                                 {postETF}
@@ -3227,7 +3637,7 @@
                           <td
                             style={{
                               ...S.tdr,
-                              color: hasAct ? "#58a6ff" : "#484f58",
+                              color: hasAct ? "var(--text-accent)" : "#484f58",
                               fontWeight: 700,
                             }}
                           >
@@ -3236,7 +3646,7 @@
                           <td
                             style={{
                               ...S.tdr,
-                              color: hasAct ? "#58a6ff" : "#484f58",
+                              color: hasAct ? "var(--text-accent)" : "#484f58",
                               fontWeight: 700,
                             }}
                           >
@@ -3249,7 +3659,7 @@
                             style={{
                               ...S.td,
                               fontWeight: 700,
-                              color: "#58a6ff",
+                              color: "var(--text-accent)",
                             }}
                           >
                             SPAXX
@@ -3304,6 +3714,7 @@
                   acct,
                   strategy: sell.strategy,
                   ticker: sell.ticker,
+                  reasoning: importedReasoning[`sell:${acct}:${sell.strategy}`] || [],
                   ...ch,
                 });
               });
@@ -3321,6 +3732,7 @@
                   acct,
                   strategy: buy.strategy,
                   ticker: buy.ticker,
+                  reasoning: importedReasoning[`buy:${acct}:${buy.strategy}`] || [],
                   ...ch,
                 });
               });
@@ -3359,7 +3771,7 @@
           const ri = Math.min(entryRound, rounds.length - 1);
           const cur = rounds[ri];
           const isSell = cur.type === "sell";
-          const accent = isSell ? "#f85149" : "#3fb950";
+          const accent = isSell ? "var(--color-sell)" : "var(--color-buy)";
           const roundEst = cur.items.reduce((s, x) => s + x.cost, 0);
           const roundShares = cur.items.reduce((s, x) => s + x.shares, 0);
 
@@ -3385,6 +3797,7 @@
 
           return (
             <div>
+              <EntryTabKeyHandler rounds={rounds} ri={ri} isSell={isSell} setEntryRound={setEntryRound} entryRound={entryRound} />
               {/* ── round navigation ── */}
               <div style={S.card}>
                 <div
@@ -3409,7 +3822,7 @@
                       {isSell ? "SELL" : "BUY"} ROUND {cur.idx + 1}
                     </div>
                     <div
-                      style={{ fontSize: 11, color: "#8b949e", marginTop: 2 }}
+                      style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}
                     >
                       Step {ri + 1} of {rounds.length}
                     </div>
@@ -3448,9 +3861,9 @@
                         background:
                           i === ri
                             ? r.type === "sell"
-                              ? "#f85149"
-                              : "#3fb950"
-                            : "#30363d",
+                              ? "var(--color-sell)"
+                              : "var(--color-buy)"
+                            : "var(--border-main)",
                       }}
                     />
                   ))}
@@ -3459,7 +3872,7 @@
                   style={{
                     textAlign: "center",
                     fontSize: 11,
-                    color: "#8b949e",
+                    color: "var(--text-muted)",
                   }}
                 >
                   {isSell
@@ -3498,7 +3911,7 @@
                   <div
                     style={{
                       fontSize: 11,
-                      color: "#8b949e",
+                      color: "var(--text-muted)",
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
@@ -3521,9 +3934,9 @@
                     </thead>
                     <tbody>
                       {cur.items.map((item) => (
-                        <tr key={`${item.acct}-${item.strategy}`}>
+                        <React.Fragment key={`${item.acct}-${item.strategy}-${item.idx}`}><tr style={{borderTop: "1px solid var(--border-main)"}}>
                           <td
-                            style={{ ...S.td, fontSize: 11, color: "#8b949e" }}
+                            style={{ ...S.td, fontSize: 11, color: "var(--text-muted)" }}
                           >
                             {item.acct}
                           </td>
@@ -3557,16 +3970,27 @@
                             />
                           </td>
                           <td style={{ ...S.tdr, fontWeight: 600 }}>
-                            {item.limitPrice > 0 ? fmt(item.cost) : "—"}
+                            <div style={{display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end'}}>
+                              <div>{item.limitPrice > 0 ? fmt(item.cost) : "—"}</div>
+                              
+                            </div>
                           </td>
                         </tr>
+                        {item.reasoning && item.reasoning.length > 0 && (
+                          <tr key={`${item.acct}-${item.strategy}-reasoning`}>
+                            <td colSpan={6} style={{...S.td, fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-input)'}}>
+                              {item.reasoning.map((r, idx) => <div key={idx}>• {r}</div>)}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr
                         style={{
                           background: "#1f6feb08",
-                          borderTop: "1px solid #30363d",
+                          borderTop: "1px solid var(--border-main)",
                         }}
                       >
                         <td
@@ -3574,7 +3998,7 @@
                           style={{
                             ...S.td,
                             fontWeight: 700,
-                            color: "#8b949e",
+                            color: "var(--text-muted)",
                             fontSize: 11,
                           }}
                         >
@@ -3606,9 +4030,9 @@
                     </thead>
                     <tbody>
                       {cur.items.map((item) => (
-                        <tr key={`${item.acct}-${item.strategy}`}>
+                        <React.Fragment key={`${item.acct}-${item.strategy}-${item.idx}`}><tr style={{borderTop: "1px solid var(--border-main)"}}>
                           <td
-                            style={{ ...S.td, fontSize: 11, color: "#8b949e" }}
+                            style={{ ...S.td, fontSize: 11, color: "var(--text-muted)" }}
                           >
                             {item.acct}
                           </td>
@@ -3640,22 +4064,33 @@
                               ...S.tdr,
                               fontWeight: 700,
                               fontSize: 14,
-                              color: "#3fb950",
+                              color: "var(--color-buy)",
                             }}
                           >
                             {fmtSh0(item.shares)}
                           </td>
                           <td style={{ ...S.tdr, fontWeight: 600 }}>
-                            {fmt(item.cost)}
+                            <div style={{display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end'}}>
+                              <div>{fmt(item.cost)}</div>
+                              
+                            </div>
                           </td>
                         </tr>
+                        {item.reasoning && item.reasoning.length > 0 && (
+                          <tr key={`${item.acct}-${item.strategy}-reasoning`}>
+                            <td colSpan={6} style={{...S.td, fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-input)'}}>
+                              {item.reasoning.map((r, idx) => <div key={idx}>• {r}</div>)}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr
                         style={{
                           background: "#1f6feb08",
-                          borderTop: "1px solid #30363d",
+                          borderTop: "1px solid var(--border-main)",
                         }}
                       >
                         <td
@@ -3663,7 +4098,7 @@
                           style={{
                             ...S.td,
                             fontWeight: 700,
-                            color: "#8b949e",
+                            color: "var(--text-muted)",
                             fontSize: 11,
                           }}
                         >
@@ -3719,9 +4154,9 @@
         const renderSOP = () => (
           <div style={S.card}>
             <div style={S.cT}>Monthly Rebalance SOP</div>
-            <div style={{ fontSize: 12, lineHeight: 1.8, color: "#c9d1d9" }}>
+            <div style={{ fontSize: 12, lineHeight: 1.8, color: "var(--text-secondary)" }}>
               <div
-                style={{ fontWeight: 700, color: "#58a6ff", marginBottom: 4 }}
+                style={{ fontWeight: 700, color: "var(--text-accent)", marginBottom: 4 }}
               >
                 DAY BEFORE
               </div>
@@ -3731,7 +4166,7 @@
                 2. Look up previous close for new ETFs
               </div>
               <div
-                style={{ fontWeight: 700, color: "#58a6ff", marginBottom: 4 }}
+                style={{ fontWeight: 700, color: "var(--text-accent)", marginBottom: 4 }}
               >
                 TRADING DAY (Pre-Market)
               </div>
@@ -3745,7 +4180,7 @@
                 proportionally from actual proceeds
               </div>
               <div
-                style={{ fontWeight: 700, color: "#f85149", marginBottom: 4 }}
+                style={{ fontWeight: 700, color: "var(--color-sell)", marginBottom: 4 }}
               >
                 MARKET OPEN
               </div>
@@ -3757,7 +4192,7 @@
                 fills
               </div>
               <div
-                style={{ fontWeight: 700, color: "#3fb950", marginBottom: 4 }}
+                style={{ fontWeight: 700, color: "var(--color-buy)", marginBottom: 4 }}
               >
                 END OF DAY
               </div>
@@ -3770,7 +4205,29 @@
 
         return (
           <div style={S.container}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={S.hdr}>Monthly Rebalance Trade Calculator</div>
+            <select
+              style={{ ...S.inpSm, width: 120 }}
+              value={theme}
+              onChange={(e) => {
+                const t = e.target.value;
+                setTheme(t);
+                document.documentElement.setAttribute('data-theme', t);
+                const s = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}');
+                s.theme = t;
+                localStorage.setItem(SAVE_KEY, JSON.stringify(s));
+              }}
+            >
+              <option value="default">Default</option>
+              <option value="github">GitHub Dark</option>
+              <option value="vercel">Vercel Dark</option>
+              <option value="monokai">Monokai</option>
+              <option value="tokyonight">Tokyo Night</option>
+              <option value="onedark">One Dark</option>
+            </select>
+          </div>
+
             <div style={S.sub}>
               3 Accounts × 5 Strategies | $100K order chunks | Real-time fill
               tracking
@@ -3841,3 +4298,4 @@
     </script>
   </body>
 </html>
+

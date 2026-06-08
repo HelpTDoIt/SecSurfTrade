@@ -27,6 +27,7 @@ class AccountInput(BaseModel):
     name: str
     type: Literal["retirement", "taxable"] = "retirement"
     margin: bool = False
+    margin_buying_power: Optional[float] = None
     cash_reserve: float = 0.0
     positions: list[PositionInput]
     cash_spaxx: float = 0.0
@@ -60,6 +61,8 @@ class EngineConfig(BaseModel):
     # unfilled-fraction threshold for the fill-based half of the predicate.
     sweep_time_minutes: int = 330
     sweep_unfilled_frac: float = 0.5
+    premarket_pct: float = 0.4
+    capture_offset_pct: float = 0.01
 
 
 class Inputs(BaseModel):
@@ -100,6 +103,11 @@ class ChunkRecord(BaseModel):
     shares: float
     limit_price: float
     cost: float
+    phase: Literal["premarket", "main", "sweep"] = "main"
+    earliest_entry: Optional[str] = None
+    funded_by: Optional[list[str]] = None
+    account_type: Optional[Literal["taxable", "retirement", "margin"]] = None
+    original_limit_price: Optional[float] = None
 
 
 Urgency = Literal["normal", "aggressive", "patient"]
@@ -116,6 +124,7 @@ class SellStrategy(BaseModel):
     rule: str
     reasoning: list[str]
     chunk_ids: list[str] = Field(default_factory=list)
+    original_limit_price: Optional[float] = None
 
 
 class BuyStrategy(BaseModel):
@@ -128,6 +137,7 @@ class BuyStrategy(BaseModel):
     rule: str
     reasoning: list[str]
     chunk_ids: list[str] = Field(default_factory=list)
+    original_limit_price: Optional[float] = None
 
 
 class DriftSnapshot(BaseModel):
@@ -232,3 +242,8 @@ class OrderChunk(BaseModel):
     shares: float
     limit_price: float
     cost: float
+    phase: Literal["premarket", "main", "sweep"] = "main"
+    earliest_entry: Optional[str] = None
+    funded_by: Optional[list[str]] = None
+    account_type: Optional[Literal["taxable", "retirement", "margin"]] = None
+    original_limit_price: Optional[float] = None

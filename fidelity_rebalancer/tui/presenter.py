@@ -271,7 +271,15 @@ class PresenterScreen(Screen):
         lines: list[str] = []
         lines.append("[bold underline]Execution Plan[/bold underline]")
         lines.append(f"Order type : {self._pending_order_type}")
-        lines.append(f"Limit price: [bold]${self._pending_price:.4f}[/bold]")
+        
+        orig = getattr(strat, "original_limit_price", None)
+        if orig and abs(orig - self._pending_price) > 1e-5:
+            diff = self._pending_price - orig
+            diff_str = f"+${diff:.4f}" if diff > 0 else f"-${abs(diff):.4f}"
+            lines.append(f"Limit price: [bold red]${self._pending_price:.4f}[/bold red] (override: {diff_str} from engine ${orig:.4f})")
+        else:
+            lines.append(f"Limit price: [bold]${self._pending_price:.4f}[/bold]")
+        
         lines.append(f"Rule       : {strat.rule}")
 
         if self._side == "sell":
@@ -289,15 +297,25 @@ class PresenterScreen(Screen):
     def _right_panel(self) -> str:
         lines: list[str] = ["[bold underline]Chunks[/bold underline]"]
         price = self._pending_price  # reflects any modification
+        
+        chunks_by_phase = {}
         for ch in self._chunks:
-            cost = ch.shares * price
-            lines.append(
-                f"[dim]{ch.chunk_id}[/dim]\n"
-                f"  {ch.shares:,.0f} sh × ${price:.4f} = ${cost:,.2f}"
-            )
+            phase = getattr(ch, "phase", "main")
+            chunks_by_phase.setdefault(phase, []).append(ch)
+            
+        for phase, phase_chunks in chunks_by_phase.items():
+            if len(chunks_by_phase) > 1 or phase != "main":
+                lines.append(f"\n[italic]{phase.upper()} TRANCHE[/italic]")
+            for ch in phase_chunks:
+                cost = ch.shares * price
+                gate_str = f" (gate: {ch.earliest_entry})" if getattr(ch, "earliest_entry", None) else ""
+                lines.append(
+                    f"[dim]{ch.chunk_id}[/dim]{gate_str}\n"
+                    f"  {ch.shares:,.0f} sh × ${price:.4f} = ${cost:,.2f}"
+                )
         if not self._chunks:
             lines.append("[dim](no chunks)[/dim]")
-        return "\n\n".join(lines)
+        return "\n".join(lines)
 
     def _reasoning_panel(self) -> str:
         bullets = "\n".join(f"• {b}" for b in self._strategy.reasoning)
@@ -337,6 +355,10 @@ class PresenterScreen(Screen):
             return
         new_price, order_type = result
         original = self._strategy.limit_price
+        
+        if getattr(self._strategy, "original_limit_price", None) is None:
+            self._strategy.original_limit_price = original
+            
         self._pending_price = new_price if order_type == "LIMIT" else original
         self._pending_order_type = order_type
         self.query_one("#left", Static).update(self._left_panel())

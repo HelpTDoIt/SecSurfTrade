@@ -50,7 +50,7 @@ def enable_debug(save_dir: Path | str | None = None) -> None:
     global _DEBUG, _DEBUG_DIR
     _DEBUG = True
     if save_dir is not None:
-        _DEBUG_DIR = Path(save_dir)
+        _DEBUG_DIR = Path(save_dir).resolve().resolve()
         _DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -58,7 +58,7 @@ def _debug_save(img, label: str) -> None:
     """Save *img* (numpy array or PIL Image) to the debug directory with a timestamp."""
     ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
     fname = f"{ts}_{label}.png"
-    dest = (_DEBUG_DIR / fname) if _DEBUG_DIR else Path(fname)
+    dest = (_DEBUG_DIR / fname) if _DEBUG_DIR else Path(fname).resolve().resolve()
     if hasattr(img, "save"):
         img.save(dest)
     else:

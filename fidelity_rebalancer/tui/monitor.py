@@ -16,7 +16,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(_ROOT))
 
 import argparse
@@ -138,10 +138,13 @@ def _market_minutes(now: datetime | None = None) -> int | None:
 # ── Fill detection ────────────────────────────────────────────────────────
 
 
+from state.schema import ChunkRecord
+
 def detect_and_log_fills(
     new_map: dict[str, "OrderRow"],
     last_filled: dict[str, float],
     journal: "Journal | None",
+    chunk_map: dict[str, ChunkRecord] | None = None,
 ) -> None:
     """Detect fill deltas between polls and write `fill` journal events.
 
@@ -188,6 +191,7 @@ def detect_and_log_fills(
                         "filled_qty": row.filled_qty,
                         "limit_price": row.limit_price,
                         "status": row.status.value,
+                        "plan_limit_price": chunk_map[order_id].limit_price if chunk_map and order_id in chunk_map else row.limit_price,
                     },
                 )
         last_filled[order_id] = row.filled_qty
@@ -252,7 +256,7 @@ class MonitorApp(App):
         self._quote_adapter = quote_adapter
         self._poll_seconds = poll_seconds
         self._journal = journal
-        self._plans_dir = plans_dir or Path("plans")
+        self._plans_dir = (plans_dir or Path("plans")).resolve()
 
         self._chunk_map = _chunk_lookup(self._state)
         self._sell_ids_by_account = _sell_chunk_ids_by_account(self._state)
@@ -277,6 +281,7 @@ class MonitorApp(App):
         # forward rather than silently discarding pre-monitor fills.
         self._last_filled: dict[str, float] = {}
         self._last_poll_error: str = ""
+        self._logged_deviations: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status-panel")
@@ -330,11 +335,12 @@ class MonitorApp(App):
         # self._order_map so that self._last_filled reflects the prior state.
         self._detect_and_log_fills(new_map)
 
+        self._check_deviations(new_map)
         self._order_map = new_map
 
         # Detect stalls (ignore snoozed chunks)
         threshold = self._state.inputs.config.stall_threshold_seconds
-        all_stalls = detect_stalls(list(new_map.values()), threshold, now)
+        all_stalls = detect_stalls(list(new_map.values()), threshold, now, chunk_map=self._chunk_map)
         self._stalls = [s for s in all_stalls if s.chunk_id not in self._snoozed]
 
         # Get re-quote suggestions
@@ -439,9 +445,44 @@ class MonitorApp(App):
             },
         )
 
+
+    def _check_deviations(self, new_map: dict[str, OrderRow]) -> None:
+        if self._scan_mode:
+            return
+        for order_id, row in new_map.items():
+            if order_id not in self._chunk_map:
+                continue
+            if order_id in self._logged_deviations:
+                continue
+                
+            ch = self._chunk_map[order_id]
+            
+            deviations = []
+            if abs(row.limit_price - ch.limit_price) > 0.005:
+                deviations.append(f"Price diff: plan {ch.limit_price:.4f} vs actual {row.limit_price:.4f}")
+            if abs(row.qty - ch.shares) > 0.5:
+                deviations.append(f"Size diff: plan {ch.shares:.0f} vs actual {row.qty:.0f}")
+                
+            if deviations:
+                self._log_event("deviation", {
+                    "chunk_id": order_id,
+                    "symbol": row.symbol,
+                    "plan_limit": ch.limit_price,
+                    "actual_limit": row.limit_price,
+                    "plan_qty": ch.shares,
+                    "actual_qty": row.qty,
+                    "reasons": deviations
+                })
+                self._logged_deviations.add(order_id)
+                # Wait, we only add if we logged it. What if it perfectly matches? 
+                # We should add to logged_deviations once we check it the first time so we don't keep checking.
+            
+            # Always add to logged deviations after first check
+            self._logged_deviations.add(order_id)
+
     def _detect_and_log_fills(self, new_map: dict[str, "OrderRow"]) -> None:
         """Delegate to the module-level helper, updating self._last_filled in place."""
-        detect_and_log_fills(new_map, self._last_filled, self._journal)
+        detect_and_log_fills(new_map, self._last_filled, self._journal, self._chunk_map)
 
     def _get_quote(self, ticker: str) -> QuoteSnapshot | None:
         if not self._quote_adapter or not ticker:
