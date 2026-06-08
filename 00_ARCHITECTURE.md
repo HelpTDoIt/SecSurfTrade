@@ -41,7 +41,7 @@ A Python _recommendation engine + monitoring component_ that reads from ATP (Act
               └────────────────────────┘
 ```
 
-The engine is pure logic and consumes/produces a state JSON. That same state JSON is the bridge for parity testing against the existing React calculator and for any future execution-side automation. Every I/O concern is behind an adapter interface.
+The engine is pure logic and consumes/produces a state JSON. That same state JSON is the bridge for parity testing against the existing React calculator and for any future execution-side automation. Every I/O concern is behind an adapter interface. The same state JSON also flows **live** over a loopback WebSocket relay (`server.py`, **B-15**) so the browser calculator and any TUI client stay in sync without a manual export/import round-trip — see **Local servers** below.
 
 ## Module structure
 
@@ -52,12 +52,14 @@ fidelity_rebalancer/
 ├── accounts.example.json       # committed template with placeholder names
 ├── 00_ARCHITECTURE.md          # this doc (lives at project root, not inside fidelity_rebalancer/)
 ├── engine/                     # pure logic, no I/O (except observability.py)
+│   ├── scheduler.py            # Phase 3: builds day-schedule with premarket/main/sweep tranches
 │   ├── calculator.py           # port of React calcTrades / allocBuys (sells, buys, cash gate)
 │   ├── optimizer.py            # drift-minimizing buy allocator; recompute_buys (F-1) for the monitor
-│   ├── chunker.py              # book-relative / POV / gap-capture / legacy chunkers; tick + ex-div
+│   ├── chunker.py              # book-relative / POV / gap-capture / legacy chunkers (odd-lots + 15 max cap)
+│   ├── volatility.py           # dynamic realized volatility estimator (yfinance / asset class / day-range)
 │   ├── strategy_sell.py        # sell-side rule selection + reasoning (rules 0–7 + default)
 │   ├── strategy_buy.py         # buy-side rule selection + reasoning (rules 1–5 + default)
-│   ├── escalation.py           # side-aware time-of-day urgency ramp (G-4)
+│   ├── escalation.py           # side-aware time-of-day and volume-exhaustion urgency ramp
 │   ├── decision_context.py     # per-decision market-input bundle (DecisionContext)
 │   ├── spread_context.py       # per-symbol spread thresholds (tight / wide)
 │   ├── size_context.py         # per-asset-class %ADV cutoffs (G-5 / G-6)
@@ -76,7 +78,7 @@ fidelity_rebalancer/
 │   ├── atp_orders.py           # Orders panel (UIA blocked by Telerik MAUI → OCR is the live path)
 │   ├── atp_ocr.py              # RapidOCR reader for L2 / Orders / Watchlist (the working fallback)
 │   ├── atp_vision.py           # vision-based L2 reader (screen capture)
-│   ├── atp_watchlist.py        # ATP Watchlist OCR: quote, prev_close, 10-day ADV, VWAP, ex-div
+│   ├── atp_watchlist.py        # ATP Watchlist OCR: quote, prev_close, 10-day ADV, VWAP, ex-div, day range
 │   ├── fatp_connect.py         # Fidelity ATP connection helper
 │   ├── fatp_watchlist.py       # Fidelity watchlist adapter
 │   ├── yfinance_fallback.py    # off-ATP path: quotes, ADV, approx intraday VWAP
@@ -88,10 +90,11 @@ fidelity_rebalancer/
 │   NOTE: the OCR/vision adapters exist because ATP's Level II and Orders panels
 │   use Telerik MAUI RadMauiScrollView controls that block UIA element access.
 │   UIA is used where it works; RapidOCR screen-capture is the automatic fallback.
-├── tui/
-│   ├── app.py                  # Textual entry point
-│   ├── presenter.py            # plan approval screens
-│   └── monitor.py              # live order monitor + stall alerts + journal.jsonl writer
+├── tui/                        # Textual terminal UI (alternate workflow to React calc)
+│   ├── app.py                  # Entry point for interactive strategy approval (python -m tui.app)
+│   ├── presenter.py            # Screens for approval/modification, highlights manual overrides (C-11)
+│   ├── monitor.py              # Live polling loop (python -m tui.monitor), stalls, journal.jsonl writer
+│   └── sync.py                 # B-15: reusable async WebSocket state-sync client (no Textual coupling)
 ├── preflight/                  # morning readiness gate (pure decision logic + interactive shell)
 │   ├── checks.py               # FT+-running + ticker-presence (Watchlist / L2) checks
 │   ├── planner.py              # L2-window plan for thin tickers against the window cap
@@ -102,6 +105,7 @@ fidelity_rebalancer/
 │   ├── strategy.py             # python -m cli.strategy --state state.json --export state.json
 │   ├── preflight.py            # python -m cli.preflight --state state.json (readiness -> sizing -> sanity)
 │   ├── progress.py             # python -m cli.progress --state state.json (buy fill vs. time-elapsed pace)
+│   ├── export_fills.py         # python -m cli.export_fills (reads journal.jsonl -> JSON for React calc)
 │   ├── eod_report.py           # python -m cli.eod_report [--since today|all|YYYY-MM-DD] (post-session summary, today by default)
 │   └── compare.py              # python -m cli.compare --engine state.json --calc calc_export.json
 │
@@ -117,12 +121,44 @@ fidelity_rebalancer/
 │   ├── test_presenter.py · test_atp_adapters.py · test_atp_ocr_orders.py
 │   ├── test_monitor_fills.py · test_monitor_recompute.py · test_monitor_e2e.py
 │   ├── test_observability.py · test_eod_report.py · test_strict_atp.py
+│   ├── test_ws_sync.py · test_scheduler.py · test_mom_sanity.py · test_export_fills_edge.py
+│   ├── test_adapters_logging.py · test_cli_path_resolution.py · test_monitor_logging_setup.py
 │   └── test_preflight_{checks,planner,sanity,orchestrator,cli}.py
 └── logs/                       # gitignored
     ├── journal.jsonl           # monitor: append-only session/fill audit log
     ├── strategy.log            # engine: leveled run log (INFO; DEBUG with -v)
     └── decisions.jsonl         # engine: structured per-ticker decision trail
 ```
+
+## Local servers (`server.py`)
+
+`server.py` lives at the repo root (outside the package) and runs two small
+loopback services, started together by `run.ps1`:
+
+- **Yahoo Finance proxy (HTTP, port 7824).** A CORS bridge so the React
+  calculator's *⬇ Fetch from Yahoo Finance* button can pull previous closes
+  without browser cross-origin errors. `GET /fetch_closes?tickers=…` → JSON
+  `{closes, errors}`.
+- **State-sync relay hub (WebSocket, port 7825) — B-15.** A schema-agnostic
+  pub/sub relay (`RelayHub` / `serve_ws` / `start_ws_hub_thread`) that lets the
+  browser calculator and any future TUI client share rebalance **state JSON**
+  live, removing the manual export/import step. It caches the last `state`
+  message and replays it to clients that join late (snapshot-on-connect), then
+  rebroadcasts each inbound frame verbatim to every *other* client.
+
+**Hard boundary:** the relay forwards **state JSON only** — there is no order or
+command channel, and it never interprets message content beyond peeking at
+`"type"` to cache snapshots. Both services **bind `127.0.0.1` only**, and the WS
+handshake is further restricted by an **Origin allowlist** (`http://127.0.0.1:7823`
+/ `http://localhost:7823`, plus `None` for non-browser clients such as
+`tui/sync.py` and the test harness) to block cross-site WebSocket hijacking.
+
+The reusable client is `tui/sync.py::StateSyncClient` (async, framework-agnostic).
+The browser opens `ws://127.0.0.1:7825`, shows a connection-status pill
+(**"Sync on"** / **"Reconnecting…"**), debounces local edits before broadcasting,
+and keeps the manual Import/Export buttons as a fallback. Mounting the client
+into a live always-on TUI screen is deferred — the current `RebalanceApp` is a
+short-lived approval wizard — tracked as **B-18** in `docs/dev/09_roadmap.md`.
 
 ## State JSON schema (high level)
 
@@ -238,6 +274,7 @@ The full Pydantic models are in chunk 2 (`docs/dev/02_state_schema_and_compare.m
 | rapidocr-onnxruntime + Pillow | — | OCR of ATP L2 / Orders / Watchlist (Telerik MAUI blocks UIA) |
 | pywinauto | 0.6.8+  | ATP UIA scraping where it works (read-only)        |
 | keyring   | 24+     | OS credential storage (Windows Credential Manager) |
+| websockets| 12+     | loopback state-sync relay hub + reusable async client (B-15) |
 | pytest    | latest  | test runner                                        |
 
 **Logging** uses the Python **stdlib `logging`** module via `engine/observability.py` (leveled `logs/strategy.log` + structured `logs/decisions.jsonl`); the live monitor writes `logs/journal.jsonl`. `loguru` is still declared in `pyproject.toml` but is no longer imported.
@@ -362,8 +399,7 @@ Plain English — pick the smallest "fingerprint" the book can absorb:
 - **POV fallback (no L2):** size from %ADV via a square-root impact model; tiny
   orders go as one invisible clip, bigger ones split into more clips with ±15%
   jitter so the pattern isn't obvious.
-- **Gap-capture (sell only, first 30 min after a gap-up):** three phases — grab
-  the gap, then standard, then sweep.
+- **Premarket / Gap-capture (sell/buy):** captures gap up for sells or gap down for buys in early tranches.
 - **Legacy $100K dollar chunker:** the compute-pass placeholder used before live
   prices exist.
 - Clips for one symbol are entered **largest-first**, sequentially (iceberg) —
@@ -415,7 +451,7 @@ so sizing isn't against a stale price.
 | — | default | ask | normal |
 
 Thresholds are per-symbol, not hardcoded:
-- **Spread** tight / wide = 0.7× / 1.5× the symbol's typical spread
+- **Spread** tight / wide = 0.8× / 1.5× the symbol's typical spread
   (`engine/spread_context.py`); live bid/ask preferred, else asset-class typical
   (large_cap ~3 bps … leveraged ~20 bps).
 - **%ADV** small/large cutoffs by asset class (**G-5 / G-6**,
@@ -432,6 +468,7 @@ Thresholds are per-symbol, not hardcoded:
   - 90–210: → normal; nudge the limit 75% toward the touch (buy→ask, sell→bid).
   - 210–330: → aggressive; limit at the touch.
   - 330+ (after 3:00): one tick **past** the touch to force a same-day fill.
+- **VWAP Time Backstop:** VWAP urgency jumps to aggressive at 2:45pm (315 minutes).
 - **EOD sweep predicate** (`engine/sweep.py`): act when the clock reaches the
   sweep cutoff (default 330 min = 15:00 ET) **or** the unfilled fraction crosses
   its threshold (default 0.5). Used by the live recompute (**F-1**, clock-only)
@@ -463,7 +500,7 @@ gated to DEBUG / `--verbose` on the console; promoting them to always-visible is
 
 ## Security model
 
-This repo is designed to be safe to make public. Key controls:
+This repo is designed to be safe to make public. Key controls (plus the loopback-server controls in **Local servers** above — the **B-15** WebSocket relay binds `127.0.0.1`, relays **state JSON only, never orders or commands**, and gates its handshake with an Origin allowlist):
 
 | Concern                                  | Control                                                                                                                                                                                                                                                                                |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

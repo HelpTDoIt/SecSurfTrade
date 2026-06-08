@@ -12,7 +12,9 @@ Pulls SectorSurfer signals, reads Fidelity position CSVs, computes the exact sel
 - **Reads Fidelity CSVs** from your Downloads folder to build the current portfolio
 - **Computes trade plans** — sells, buys, and ≤$100K execution chunks — matching your strategy allocations
 - **React calculator** — browser-based UI for reviewing trades, logging fills, and tracking allocation drift
-- **OCR adapters** — reads live bid/ask/L2 from Fidelity Trader+ via screen capture for limit price generation
+- **Live state sync (B-15)** — a loopback WebSocket relay keeps the browser calculator and engine/TUI clients in sync in real time, so edits propagate without manual export/import (manual Import/Export remains as a fallback)
+- **Terminal UI (TUI)** — alternate, purely keyboard-driven command-line interfaces for approving trades and live-monitoring execution (built with Textual)
+- **OCR adapters** — reads live bid/ask/L2 from Fidelity Trader+ via screen capture for limit price generation, incorporating dynamic volatility and order book imbalance
 - **Morning preflight** — interactive readiness gate that confirms FT+ has every needed ticker (Watchlist + L2 windows) before sizing, then runs a pre-trade sanity gate
 - **EOD report** — formats the session's journal audit log into a post-session summary
 - **Parity check** — validates engine output against the React calculator's computed trades
@@ -54,7 +56,7 @@ See [USER_GUIDE.md](USER_GUIDE.md) for the full daily workflow.
 ```
 SecSurfTrade/
 ├── run.ps1                         # one-click launcher and dependency checker
-├── server.py                       # local Yahoo Finance proxy (CORS bridge for React calc)
+├── server.py                       # Yahoo Finance proxy + loopback WebSocket state-sync hub (B-15)
 ├── rebalance_calculator.html       # React calculator (CDN React, no build step)
 ├── strategy_map.example.json       # template — copy to strategy_map.json and fill in yours
 ├── scripts/                        # operational scripts — run these on trading days
@@ -77,10 +79,10 @@ SecSurfTrade/
     ├── adapters/                   #   ATP OCR readers, CSV importer, mock ATP
     ├── state/                      #   Pydantic schema, state import/export, parity diff
     ├── preflight/                  #   readiness checks, L2-window planner, sanity gate, orchestrator
-    ├── tui/                        #   Textual terminal UI (order approval, live monitor)
+    ├── tui/                        #   Textual terminal UI (app.py for order approval, monitor.py for live polling)
     ├── cli/                        #   CLI entry points (compute, strategy, preflight, compare, progress, eod_report)
     ├── scripts/                    #   dev/diagnostic utilities (not part of daily workflow)
-    └── tests/                      #   289 unit tests + fixtures
+    └── tests/                      #   467 unit tests + fixtures
 ```
 
 ---
@@ -99,11 +101,22 @@ This repository is safe to make public. Sensitive data is kept out of the repo b
 
 ---
 
+## Recent strategy tuning
+
+- **Imbalance thresholds:** 0.80 / 0.20
+- **VWAP ramp thresholds:** > 0.25 and > 0.75; the VWAP time backstop jumps to aggressive at 2:45pm.
+- **Phase-aware stalls:** the stall timer scales with volume (more patient with thin tickers).
+- **Execution slippage:** tracked in the EOD report.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full change history.
+
+---
+
 ## Running the tests
 
 ```powershell
 cd fidelity_rebalancer
 $env:PYTHONPATH = "."
 python -m pytest tests/ -q
-# Expected: 289 passed
+# Expected: 467 passed
 ```

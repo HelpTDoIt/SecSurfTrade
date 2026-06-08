@@ -14,6 +14,7 @@
 6. [Python CLI Reference](#6-python-cli-reference)
 7. [Known Limitations](#7-known-limitations)
 8. [Troubleshooting](#8-troubleshooting)
+9. [Alternate Workflow — The Terminal UI (TUI)](#9-alternate-workflow--the-terminal-ui-tui)
 
 ---
 
@@ -141,7 +142,7 @@ Then run the scraper — it will open a browser window and wait for you to log i
 cd fidelity_rebalancer
 $env:PYTHONPATH = "."
 python -m pytest tests/ -q
-# Expected: 289 passed
+# Expected: 467 passed
 ```
 
 ---
@@ -292,9 +293,9 @@ python -m cli.compute --inputs ./csvs --signals ../signals.json --export ../stat
 | `--inputs`  | auto-detect from `~/Downloads` | Directory containing Fidelity CSV files                                          |
 | `--signals` | required                       | Path to `signals.json` from Step 1                                               |
 | `--export`  | required                       | Output path for engine state JSON                                                |
-| `--chunker` | `legacy_dollar`                | `legacy_dollar` = $100K chunks (matches React calc); `book` = live book-relative |
+| `--chunker` | `legacy_dollar`                | `legacy_dollar` = $100K chunks (capped at 15 max) (matches React calc); `book` = live book-relative |
 
-Output: `state.json` — full engine state with accounts, signals, sells, buys, and chunks.
+Output: `state.json` — full engine state. Note: The engine computes Month-over-Month allocation differences against the previous export; a `[WARN]` will be printed to stderr if a strategy drifts by >5%. with accounts, signals, sells, buys, and chunks.
 
 ### Step 4 — Load into the React calculator
 
@@ -321,7 +322,7 @@ The Trades tab shows the full execution plan:
 
 - **Trade Summary** — how many sells/buys per account, active signals
 - **Per-account sections** — Phase 1: SELLS, then Phase 2: BUYS
-- **Chunk tables** — each order broken into ≤$100K chunks; limit price is editable
+- **Chunk tables** — each order broken into ≤$100K chunks (capped at 15 max); limit price is editable
 - **Fill tracking** — log fills as they happen; remaining shares/dollars update live
 
 No action needed here before opening — this is the review step. Verify the numbers look correct before moving to the Entry tab.
@@ -340,7 +341,7 @@ Click the **📥 Entry** tab. This shows one round of orders at a time.
 **For sells:**
 
 - Shares are **fixed** — read directly from the chunk; enter this number in ATP
-- Adjust limit price if needed; est. proceeds update immediately
+- Adjust limit price if needed; the engine's reasoning for this trade is shown directly below the order; est. proceeds update immediately
 - IRAs: Sell simultaneously in both accounts; TOD: sells and buys can go simultaneously
 
 **For buys:**
@@ -389,10 +390,18 @@ Use **⬇ Export State** (Trades tab) to save a snapshot of the session for your
 
 Open at: **http://localhost:7823/rebalance_calculator.html**
 
+> **Live sync (B-15):** when `server.py` is running, the calculator connects to the local
+> WebSocket relay and shows a status pill in the Trades-tab toolbar — **"Sync on"** (connected),
+> **"Reconnecting…"**, or **"Connecting…"**. Edits to allocations, limit prices, and fills
+> broadcast to any other open tab or client in real time, so you no longer need to manually
+> Export/Import between views. The manual **⬆ Import State** / **⬇ Export State** buttons still
+> work as a fallback.
+
 ### Setup tab
 
 | Section                  | What it does                                                                                                                                                          |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Theme Switcher           | Dropdown menu in the top right to switch between Dark (Default), Nord, and Solarized Dark themes. Your choice persists across sessions.                               |
 | 1. Import Position Data  | Load Fidelity CSVs via **📂 Load file** button or paste. Shows position count when parsed.                                                                            |
 | 2. Strategy Signals      | Enter current + new ticker per strategy. NEW field turns red when it differs from CURRENT (= active trade).                                                           |
 | 3. Previous Close Prices | Auto-populated from `signals.json` import, or click **⬇ Fetch from Yahoo Finance** to pull live via the local proxy server (no CORS issues). Edit any field manually. |
@@ -414,7 +423,7 @@ Only same-origin relative paths are accepted — absolute URLs and protocol-rela
 | ⬆ Import Fills    | Load a CSV of fill data (columns: Account, Side, Strategy, FillPrice, FillShares)                |
 | ⬇ Export Orders   | Download a CSV of all pending chunk orders                                                       |
 | ⬇ Export State    | Download a full JSON snapshot (compatible with `cli.compare`)                                    |
-| PHASE 1: SELLS    | Per-strategy sell orders with chunk breakdown; editable limit prices                             |
+| PHASE 1: SELLS    | Per-strategy sell orders with chunk breakdown; editable limit prices (a red diff badge will appear if you deviate from the original plan)                             |
 | PHASE 2: BUYS     | Per-strategy buy orders; live recalc when real fill data is entered                              |
 | + Fill            | Add a fill row (price × shares) to any strategy's fill tracker                                   |
 | LIVE RECALC badge | Appears on buys when actual sell fills have been logged; buy allocation adjusts to real proceeds |
@@ -657,4 +666,36 @@ The Playwright Chromium window opens on every scraper run and closes when done. 
 | `run.ps1` exits with "pip install failed"                         | No internet or corporate proxy                                 | Run `pip install -e fidelity_rebalancer` manually from a network that allows PyPI                                                                                                                                                                                       |
 | `run.ps1` exits with "Chromium install failed"                    | Disk space or proxy issue                                      | Run `python -m playwright install chromium` manually                                                                                                                                                                                                                    |
 | `ModuleNotFoundError` on any Python module                        | Package not installed                                          | Re-run `.\run.ps1` — it installs missing packages automatically                                                                                                                                                                                                         |
-| Tests fail / unexpected failures                                  | Dependencies out of sync                                       | `pip install -e "fidelity_rebalancer/[dev]"` and re-run; expected: 289 passed                                                                                                                                                                                           |
+| Tests fail / unexpected failures                                  | Dependencies out of sync                                       | `pip install -e "fidelity_rebalancer/[dev]"` and re-run; expected: 467 passed                                                                                                                                                                                           |
+
+
+## 9. Alternate Workflow — The Terminal UI (TUI)
+
+The codebase includes an alternate, purely text-based Terminal User Interface (TUI) built with the Textual framework. While the React Calculator is the recommended visual method for reviewing and logging trades, the TUI provides a fast, keyboard-driven alternative directly within PowerShell.
+
+### 1. The Strategy Approval App
+Instead of reviewing trades in the browser, you can step through the engine's suggested limit prices interactively in the terminal.
+
+```powershell
+# from the repo root
+$env:PYTHONPATH = 'fidelity_rebalancer'
+python -m tui.app --plan state.json
+```
+
+**Key Features**:
+- Uses **A**pprove, **M**odify, **S**kip, and **Q**uit keybindings.
+- **Interactive Override Diff (C-11)**: If you press **M** to modify a limit price, the app renders the override in a distinct color and shows the signed deviation from the engine's recommendation (e.g., `+$0.0400 above recommended $62.3900`), so an accidental fat-finger is obvious before you type it into ATP.
+
+### 2. The Live Monitor
+The live monitor polls the Fidelity ATP Orders panel via OCR to track fill progress and detect stalls.
+
+```powershell
+# from the repo root
+$env:PYTHONPATH = 'fidelity_rebalancer'
+python -m tui.monitor --plan state.json --poll-seconds 45
+```
+
+**Key Features**:
+- Continuously polls the Orders window to update filled shares.
+- Detects execution stalls and prompts you to Re-quote or Ignore.
+- Automatically appends to the logs/journal.jsonl audit log.
