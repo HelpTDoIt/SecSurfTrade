@@ -3238,8 +3238,10 @@
                 .map(([acct, res]) => {
                   const af = fills[acct] || {};
                   let sellFunds = 0;
+                  let expectedSell = 0;
                   res.sells.forEach((s) => {
                     sellFunds += sumFills(af[s.strategy]?.sells || []).proceeds;
+                    expectedSell += s.estProceeds;
                   });
                   const avail = res.deplCash + sellFunds;
                   const estBuy = (
@@ -3247,7 +3249,14 @@
                     res.buys ||
                     []
                   ).reduce((s, b) => s + b.estCost, 0);
-                  return { acct, avail, estBuy, ok: avail >= estBuy - 0.01 };
+                  return {
+                    acct,
+                    sellFunds,
+                    expectedSell,
+                    avail,
+                    estBuy,
+                    ok: avail >= estBuy - 0.01,
+                  };
                 })
             : [];
 
@@ -3337,18 +3346,29 @@
               </div>
 
               {/* ── IRA cash advisory ── */}
-              {iraRows.map(({ acct, avail, estBuy, ok }) => (
-                <div
-                  key={acct}
-                  style={{ ...(ok ? S.info : S.err), marginBottom: 8 }}
-                >
-                  <strong>{acct}</strong>: available {fmt(avail)} vs. est. buys{" "}
-                  {fmt(estBuy)}
-                  {ok
-                    ? " — ✓ OK to proceed"
-                    : " — ⚠ sell proceeds may not yet be settled (advisory)"}
-                </div>
-              ))}
+              {iraRows.map(
+                ({ acct, sellFunds, expectedSell, avail, estBuy, ok }) => (
+                  <div
+                    key={acct}
+                    style={{ ...(ok ? S.info : S.err), marginBottom: 8 }}
+                  >
+                    <strong>{acct}</strong>
+                    {expectedSell > 0 && (
+                      <span style={{ color: "#f85149" }}>
+                        {" "}
+                        — sell proceeds logged {fmt(sellFunds)} of ~
+                        {fmt(expectedSell)} expected
+                      </span>
+                    )}
+                    <div style={{ marginTop: 2 }}>
+                      available {fmt(avail)} vs. est. buys {fmt(estBuy)}
+                      {ok
+                        ? " — ✓ OK to proceed"
+                        : " — ⚠ sell proceeds may not yet be settled (advisory)"}
+                    </div>
+                  </div>
+                ),
+              )}
 
               {/* ── orders table ── */}
               <div style={S.card}>
