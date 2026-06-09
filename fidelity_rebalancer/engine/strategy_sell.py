@@ -29,7 +29,7 @@ from adapters import Level2Snapshot, QuoteSnapshot
 from engine import observability
 from engine.chunker import (
     adjust_prev_close_for_exdiv,
-    build_gap_capture_chunks,
+    build_premarket_chunks,
     build_sell_chunks,
     round_to_tick,
     tick,
@@ -73,11 +73,13 @@ class _Features:
     adj_prev_close: float
     px_tick: float
     vwap: Optional[float] = None        # intraday VWAP (ATP only; None if unavailable)
+    imbalance: Optional[float] = None
 
 
 def _features(
     sell: SellRecord,
     quote: QuoteSnapshot,
+    l2: Level2Snapshot,
     today: date,
     adv: Optional[float],
     exdiv_calendar: Optional[dict],
@@ -99,7 +101,13 @@ def _features(
         day_change_pct = None
 
     px_tick = tick(quote.bid or quote.ask or quote.last or 1.0)
+    total_bid = sum(getattr(b, 'size', 0) for b in getattr(l2, 'bids', []))
+    total_ask = sum(getattr(a, 'size', 0) for a in getattr(l2, 'asks', []))
+    total = total_bid + total_ask
+    imbalance = (total_bid / total) if total > 0 else None
+
     return _Features(
+        imbalance=imbalance,
         spread_bps=spread_bps,
         midpoint=midpoint,
         rel_vol=rel_vol,
@@ -157,15 +165,15 @@ def _decide(
               and f.adj_prev_close > 0)
     in_opening = market_minutes is not None and 0 <= market_minutes <= 30
     if gap_up and in_opening and sell.shares >= 100:
-        gap_price = round_to_tick(f.adj_prev_close * 0.99, quote.bid)
-        standard_price = round_to_tick(f.midpoint or quote.last, quote.bid)
+        gap_price = round_to_tick(quote.ask + f.px_tick, quote.ask)
+        standard_price = round_to_tick(quote.ask, quote.ask)
         sweep_price = round_to_tick(quote.bid, quote.bid)
         limit = gap_price
-        return ("gap_capture", "aggressive", limit, [
+        return ("premarket", "aggressive", limit, [
             _spread_bullet(f),
             f"Gap up +{f.day_change_pct:.2f}% at open, {market_minutes} min into session.",
-            f"Phase 1 (30% shares): gap capture at prev_close×0.99 = ${gap_price:.4f}.",
-            f"Phase 2 (50% shares): standard at ${standard_price:.4f}.",
+            f"Phase 1 (30% shares): gap capture at ask+1 tick = ${gap_price:.4f}.",
+            f"Phase 2 (50% shares): standard at ask = ${standard_price:.4f}.",
             f"Phase 3 (20% shares): sweep at bid ${sweep_price:.4f}.",
         ])
 
@@ -181,21 +189,21 @@ def _decide(
 
     # Rule 2: tight spread + large position → BID
     if tight and large_pos:
-        limit = round_to_tick(quote.bid, quote.bid)
+        limit = round_to_tick(quote.ask, quote.ask)
         return ("tight_spread_large_position", "patient", limit, [
             _spread_bullet(f),
             _adv_bullet(f, sell),
             f"Position is large (>{zc.sell_large_pct:g}% ADV) — drip the order in via more chunks.",
-            f"LIMIT at bid ${limit:.4f} to avoid pushing the market.",
+            f"LIMIT at ask ${limit:.4f} to avoid pushing the market.",
         ])
 
     # Rule 3: wide spread → BID + 1 tick
     if wide:
-        limit = round_to_tick(quote.bid + f.px_tick, quote.bid)
+        limit = round_to_tick(quote.ask - f.px_tick, quote.ask)
         return ("wide_spread", "patient", limit, [
             _spread_bullet(f),
             "Wide spread — avoid crossing.",
-            f"LIMIT at bid+1 tick ${limit:.4f}.",
+            f"LIMIT at ask−1 tick ${limit:.4f}.",
             _adv_bullet(f, sell),
         ])
 
@@ -219,6 +227,24 @@ def _decide(
             f"LIMIT at current bid ${limit:.4f}.",
         ])
 
+    # Rule 5.5: Order book strongly bid-heavy (> 0.80) -> favorable for seller
+    if f.imbalance is not None and f.imbalance > 0.80:
+        limit = round_to_tick(quote.ask + f.px_tick, quote.ask)
+        return ("bid_heavy_book", "patient", limit, [
+            _spread_bullet(f),
+            f"Order book is heavily bid-skewed (imbalance {f.imbalance:.2f}) — expecting upward price pressure.",
+            f"LIMIT at ask+1 tick ${limit:.4f} to wait for price to rise.",
+        ])
+
+    # Rule 5.6: Order book strongly ask-heavy (< 0.20) -> adverse for seller
+    if f.imbalance is not None and f.imbalance < 0.20:
+        limit = round_to_tick(quote.bid, quote.bid)
+        return ("ask_heavy_book", "aggressive", limit, [
+            _spread_bullet(f),
+            f"Order book is heavily ask-skewed (imbalance {f.imbalance:.2f}) — expecting downward price pressure.",
+            f"LIMIT at bid ${limit:.4f} to secure fill.",
+        ])
+
     # Rule 6: selling above VWAP → take the fill at current last
     if f.vwap and quote.last > f.vwap * 1.001:
         limit = round_to_tick(quote.last, quote.bid or quote.last)
@@ -230,19 +256,19 @@ def _decide(
 
     # Rule 7: selling below VWAP → be patient, price near bid
     if f.vwap and quote.last < f.vwap * 0.999:
-        limit = round_to_tick(quote.bid + f.px_tick, quote.bid)
+        limit = round_to_tick(quote.ask, quote.ask)
         return ("below_vwap", "patient", limit, [
             _spread_bullet(f),
             f"Last ${quote.last:.4f} is below VWAP ${f.vwap:.4f} — avoid selling into weakness.",
-            f"LIMIT at bid+1 tick ${limit:.4f}, patient.",
+            f"LIMIT at ask ${limit:.4f}, patient.",
         ])
 
     # Default: midpoint, normal
-    limit = round_to_tick(f.midpoint or quote.last or quote.bid, quote.bid or quote.last)
+    limit = round_to_tick(quote.ask or quote.last or quote.bid, quote.ask or quote.last)
     return ("default", "normal", limit, [
         _spread_bullet(f),
         _adv_bullet(f, sell),
-        f"No special condition triggered — LIMIT at midpoint ${limit:.4f}.",
+        f"No special condition triggered — LIMIT at ask ${limit:.4f}.",
     ])
 
 
@@ -276,25 +302,28 @@ def generate_sell_strategy(
 
     adv = ctx.adv if ctx.adv is not None else get_adv(sell.ticker)
 
-    feats = _features(sell, quote, today, adv, exdiv_calendar, vwap=ctx.vwap)
+    feats = _features(sell, quote, l2, today, adv, exdiv_calendar, vwap=ctx.vwap)
     rule, urgency, limit_price, reasoning = _decide(
         feats, sell, quote, ctx.spread_ctx, market_minutes=ctx.market_minutes,
         size_ctx=ctx.size_ctx,
     )
 
     # Time-of-day urgency ramp (symmetric with buys; nudges toward the bid).
-    # gap_capture fires only in the first 30 min while escalation starts at
-    # 90 min, so the two never overlap — escalation is a no-op for gap_capture.
-    urgency, limit_price, reasoning = _escalate(
-        "sell", urgency, limit_price, reasoning, quote, feats.px_tick,
-        ctx.market_minutes,
-    )
+    # premarket fires only in the first 30 min while escalation starts at
+    # 90 min, so the two never overlap — escalation is a no-op for premarket.
+    if rule != "down_day":
+        urgency, limit_price, reasoning = _escalate(
+            "sell", urgency, limit_price, reasoning, quote, feats.px_tick,
+            ctx.market_minutes,
+        )
+    else:
+        reasoning = reasoning + ["Down day detected: Time-of-day escalation disabled to avoid panic selling."]
 
-    if rule == "gap_capture":
+    if rule == "premarket":
         gap_price = round_to_tick(feats.adj_prev_close * 0.99, quote.bid)
         standard_price = round_to_tick(feats.midpoint or quote.last, quote.bid)
         sweep_price = round_to_tick(quote.bid, quote.bid)
-        chunk_dicts = build_gap_capture_chunks(
+        chunk_dicts = build_premarket_chunks(
             sell.shares, gap_price, standard_price, sweep_price,
         )
     else:

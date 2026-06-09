@@ -107,6 +107,7 @@ def calc_trades(
     signals: dict[str, dict[str, str]],
     closes: dict[str, float],
     pending_activity: float = 0.0,
+    buying_power_override: float | None = None,
 ) -> dict:
     """
     Port of JS calcTrades.
@@ -221,6 +222,7 @@ def calc_trades(
         est_sell,
         depl_cash,
         total_pool,
+        buying_power_override,
     )
 
     return {
@@ -247,9 +249,10 @@ def _alloc_buys(
     sell_proceeds: float,
     depl_cash: float,
     total_pool: float,
+    buying_power_override: float | None = None,
 ) -> list[dict]:
     """Port of JS allocBuys."""
-    avail = sell_proceeds + depl_cash
+    avail = buying_power_override if buying_power_override is not None else (sell_proceeds + depl_cash)
     out: list[dict] = []
 
     if len(trading) == 0 and not cash_ok:

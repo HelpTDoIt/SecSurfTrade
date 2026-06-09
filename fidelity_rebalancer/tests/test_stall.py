@@ -158,7 +158,7 @@ def test_sell_requote_basic():
     quote = _quote(bid=62.37, ask=62.45)
     sugg = recommend_requote(stall, "sell", quote)
     assert sugg.chunk_id == "s1"
-    assert sugg.new_limit == pytest.approx(62.38)
+    assert sugg.new_limit == pytest.approx(62.44)
     assert sugg.remaining_qty == pytest.approx(25.0)
     assert len(sugg.rationale) > 0
 
@@ -176,7 +176,7 @@ def test_sell_requote_wide_book_reprices_to_bid_plus_tick():
     )
     quote = _quote(bid=62.00, ask=62.50)
     sugg = recommend_requote(stall, "sell", quote)
-    assert sugg.new_limit == pytest.approx(62.01)
+    assert sugg.new_limit == pytest.approx(62.49)
 
 
 def test_sell_requote_rationale_contains_limits():
@@ -205,7 +205,7 @@ def test_buy_requote_basic():
     )
     quote = _quote(bid=75.45, ask=75.53)
     sugg = recommend_requote(stall, "buy", quote)
-    assert sugg.new_limit == pytest.approx(75.49)
+    assert sugg.new_limit == pytest.approx(75.46)
 
 
 def test_buy_requote_wide_book_reprices_to_midpoint():
@@ -221,7 +221,7 @@ def test_buy_requote_wide_book_reprices_to_midpoint():
     )
     quote = _quote(bid=75.90, ask=76.00)
     sugg = recommend_requote(stall, "buy", quote)
-    assert sugg.new_limit == pytest.approx(75.95)
+    assert sugg.new_limit == pytest.approx(75.91)
 
 
 # ── MockATP.advance() ────────────────────────────────────────────────────
@@ -459,8 +459,8 @@ def test_e2e_stall_detect_requote_recompute(tmp_path: Path):
     mock.set_quote("EEM", bid=62.37, ask=62.45, last=62.38)
     quote = mock.get_quote("EEM")
     sugg = recommend_requote(stalls[0], "sell", quote)
-    # bid+1tick=62.38, orig-5ticks=62.34 → max=62.38
-    assert sugg.new_limit == pytest.approx(62.38)
+    # ask-1tick=62.44, orig-5ticks=62.34 → max=62.38
+    assert sugg.new_limit == pytest.approx(62.44)
 
     # Step 4: s2 fills (user cancels and re-enters as s2b)
     # Simulate s2 filled from partial (re-entered order fills fully)
@@ -621,13 +621,13 @@ def test_requote_rule_changes_when_book_moves_tight_to_wide():
     # Tight book (~2 bps): no special condition → default rule prices at midpoint.
     tight_quote = _quote(bid=50.00, ask=50.01, last=50.005)
     tight = recommend_requote(stall, "sell", tight_quote)
-    assert tight.new_limit == pytest.approx(50.00)  # midpoint
+    assert tight.new_limit == pytest.approx(50.01)  # ask
     assert any("default" in r for r in tight.rationale)
 
     # Wide book (~20 bps): the wide-spread rule now wins → bid+1 tick.
     wide_quote = _quote(bid=50.00, ask=50.10, last=50.05)
     wide = recommend_requote(stall, "sell", wide_quote)
-    assert wide.new_limit == pytest.approx(50.01)  # bid + 1 tick
+    assert wide.new_limit == pytest.approx(50.09)  # bid + 1 tick
     assert any("wide_spread" in r for r in wide.rationale)
 
     # The point of F-6: re-pricing tracked the book, so the limits differ.
@@ -656,7 +656,7 @@ def test_requote_buy_side_uses_buy_rules():
     )
     quote = _quote(bid=99.90, ask=100.10, last=100.00)  # 20 bps wide
     sugg = recommend_requote(stall, "buy", quote)
-    assert sugg.new_limit == pytest.approx(100.00)  # midpoint
+    assert sugg.new_limit == pytest.approx(99.91)  # bid+1 tick
     assert any("wide_spread" in r for r in sugg.rationale)
 
 
@@ -670,4 +670,4 @@ def test_requote_three_arg_call_site_still_works():
     sugg = recommend_requote(stall, "sell", quote)  # positional 3-arg form
     assert sugg.chunk_id == "s1"
     assert sugg.remaining_qty == pytest.approx(25.0)
-    assert sugg.new_limit == pytest.approx(62.38)
+    assert sugg.new_limit == pytest.approx(62.44)

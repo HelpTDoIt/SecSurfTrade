@@ -113,6 +113,77 @@ def _thin_pairs(state, watchlist) -> list[tuple[str, float]]:
     return [(sym, pct) for sym, _side, pct in triples]
 
 
+
+# ── Margin Power ─────────────────────────────────────────────────────────────
+
+def run_margin_prompts(state, state_path: str) -> None:
+    from engine.calculator import calc_trades
+    from state.schema import BuyAllocationRecord
+    from state.importer import save_state
+    
+    margin_accts = [a for a in state.inputs.accounts if a.margin]
+    if not margin_accts:
+        return
+        
+    updated = False
+    for acct in margin_accts:
+        _info(f"Account '{acct.name}' is a margin account.")
+        ans = _prompt(f"     Enter Available Buying Power (or press Enter to use default proceeds+cash): ")
+        if not ans:
+            continue
+        try:
+            bp = float(ans.replace(',', ''))
+            acct.margin_buying_power = bp
+            
+            # Recompute buys for this account
+            strategies = acct.strategy_allocations
+            cfg = {"strategies": strategies, "cashReserve": acct.cash_reserve}
+            positions = {
+                p.symbol: {
+                    "symbol": p.symbol,
+                    "quantity": p.quantity,
+                    "value": p.value,
+                    "price": p.price,
+                }
+                for p in acct.positions
+            }
+            signals = {
+                s.strategy: {"current": s.current_ticker, "new": s.new_ticker}
+                for s in state.inputs.signals
+                if s.account == acct.name
+            }
+            
+            snap = calc_trades(
+                cfg, positions, signals, state.inputs.prev_closes, acct.pending_activity, buying_power_override=bp
+            )
+            
+            # Update buys
+            new_buys = []
+            for buy in snap["buys"]:
+                new_buys.append(
+                    BuyAllocationRecord(
+                        account=acct.name,
+                        strategy=buy["strategy"],
+                        ticker=buy["ticker"],
+                        dollar_target=buy["dollar_target"],
+                        limit_price=buy["limit_price"],
+                        share_target=buy["shares"],
+                        est_cost=buy["est_cost"],
+                        is_rebalance=buy["is_rebalance"],
+                        target_value=buy["target_value"],
+                    )
+                )
+            
+            # Replace old buys for this account
+            state.computed.buy_allocations = [b for b in state.computed.buy_allocations if b.account != acct.name] + new_buys
+            updated = True
+            _ok(f"Updated buying power for {acct.name} to ${bp:,.2f}")
+        except ValueError:
+            _err("Invalid number. Skipping margin override.")
+            
+    if updated:
+        save_state(state, Path(state_path))
+
 # ── Readiness gate ────────────────────────────────────────────────────────────
 
 
@@ -407,6 +478,7 @@ def print_order_book(state) -> None:
         total_shares: float,
         limit: float,
         est: float,
+        reasoning: list[str] | None = None,
     ) -> None:
         chunks = chunk_index.get((account, strategy, ticker), [])
         n = len(chunks)
@@ -415,14 +487,26 @@ def print_order_book(state) -> None:
             f"@ ${limit:>10,.4f}  ~${est:>14,.2f}  [{strategy}]  "
             f"({n} chunk{'s' if n != 1 else ''})"
         )
+        if reasoning:
+            for r in reasoning:
+                _info(f"         • {r}")
         if n == 0:
             _warn(f"         NO CHUNKS for this order — it cannot be entered as-is.")
             return
+        chunks_by_phase = {}
         for c in chunks:
-            _info(
-                f"         #{c.idx + 1:<2} {c.shares:>10,.0f} sh "
-                f"@ ${c.limit_price:>10,.4f}  ~${c.cost:>14,.2f}"
-            )
+            phase = getattr(c, "phase", "main")
+            chunks_by_phase.setdefault(phase, []).append(c)
+
+        for phase, phase_chunks in chunks_by_phase.items():
+            if len(chunks_by_phase) > 1 or phase != "main":
+                _info(f"         [{phase.upper()} TRANCHE]")
+            for c in phase_chunks:
+                gate_str = f" (gate: {c.earliest_entry})" if getattr(c, "earliest_entry", None) else ""
+                _info(
+                    f"         #{c.idx + 1:<2} {c.shares:>10,.0f} sh "
+                    f"@ ${c.limit_price:>10,.4f}  ~${c.cost:>14,.2f}{gate_str}"
+                )
 
     by_acct: dict[str, dict[str, list]] = {}
     for s in sells:
@@ -445,6 +529,7 @@ def print_order_book(state) -> None:
                 s.shares,
                 s.limit_price,
                 s.est_proceeds,
+                getattr(s, "reasoning", None),
             )
         for b in sorted(groups["BUY"], key=lambda x: (x.strategy, x.ticker)):
             acct_buy += b.est_cost
@@ -456,6 +541,7 @@ def print_order_book(state) -> None:
                 float(b.share_target),
                 b.limit_price,
                 b.est_cost,
+                getattr(b, "reasoning", None),
             )
         _info(
             f"    -- account totals: sell ~${acct_sell:,.2f}  "
@@ -587,10 +673,14 @@ def main() -> None:
     print("\n  Morning Preflight")
     _hr()
 
+
     _step("Step 1/3 — Readiness gate (Fidelity Trader+ running)")
     run_readiness_gate(state)
+    
+    run_margin_prompts(state, state_path)
 
     _step("Step 2/3 — Order sizing (watchlist + L2 checks, then size)")
+
     plan, watchlist_rows = run_presizing_checks(state, cap=args.cap)
     used_fallback = run_order_sizing(state_path, args.confirmed_proceeds)
 

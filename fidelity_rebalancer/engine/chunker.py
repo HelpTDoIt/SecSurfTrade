@@ -38,7 +38,7 @@ CHUNK_DEFAULT = 100_000   # legacy $100K chunker default
 _IMPACT_COEFF      = 0.5      # Y, dimensionless
 _DAILY_SIGMA_BPS   = 100.0    # σ proxy (1% daily vol)
 _DEFAULT_JITTER    = 0.15     # ±15% jitter to defeat HFT pattern matching
-_MAX_CHUNKS        = 20       # safety cap (matches Fidelity's daily order ceiling)
+_MAX_CHUNKS        = 15       # safety cap (matches Fidelity's daily order ceiling)
 
 # ── Intraday volume profile (U-shape) ────────────────────────────────────
 # Empirical US equity ETF volume distribution.  Multiplier applied to the
@@ -81,12 +81,12 @@ def round_to_tick(price: float, ref_price: Optional[float] = None) -> float:
 # ── Round helpers ─────────────────────────────────────────────────────────
 
 def _round_to_100(n: float) -> int:
-    """Port of JS roundTo100: Math.round(n / 100) * 100, half-up."""
-    return math.floor(n / 100 + 0.5) * 100
+    """Modified for odd-lot support: no longer rounds to 100."""
+    return int(math.floor(n))
 
 
 def _floor_to_100(n: float) -> int:
-    return int(math.floor(n / 100) * 100)
+    return int(math.floor(n))
 
 
 # ── Book-relative chunker ─────────────────────────────────────────────────
@@ -107,8 +107,8 @@ def _max_chunk_shares(
     by_vol   = _floor_to_100(max_pct_of_5min_volume * (vol5min or 0))
     candidates = [c for c in (by_depth, by_vol) if c > 0]
     if not candidates:
-        return 100
-    return max(100, min(candidates))
+        return 1
+    return max(1, min(candidates))
 
 
 def build_sell_chunks(
@@ -207,7 +207,7 @@ def build_sell_chunks_legacy(
             raw = math.floor(chunk_limit / lim)
             shs = _round_to_100(raw)
             if shs <= 0:
-                shs = min(left, 100)
+                shs = min(left, 1)
             shs = min(shs, left)
         else:
             shs = left
@@ -241,7 +241,7 @@ def build_buy_chunks_legacy(
             raw = math.floor(chunk_limit / lim)
             shs = _round_to_100(raw)
             if shs <= 0:
-                shs = 100
+                shs = 1
             shs = min(shs, max_shs)
         else:
             shs = max_shs
@@ -297,10 +297,14 @@ def _pov_tier(pov_pct: float, spread_bps: float) -> tuple[int, str]:
     return (4, "market_moving")
 
 
-def _chunk_count(tier: int, pov_pct: float, side: str) -> int:
-    """Number of chunks for a given tier, with sell-side asymmetry."""
+def _chunk_count(tier: int, pov_pct: float, side: str) -> tuple[int, bool]:
+    """Number of chunks for a given tier, with sell-side asymmetry.
+
+    Returns ``(n_chunks, was_capped)`` — the bool flags an order whose natural
+    chunk count exceeded ``_MAX_CHUNKS`` and was clamped.
+    """
     if tier == 1:
-        return 1
+        return 1, False
     if tier == 2:
         n = math.ceil(pov_pct)
     elif tier == 3:
@@ -309,7 +313,9 @@ def _chunk_count(tier: int, pov_pct: float, side: str) -> int:
         n = math.ceil(2.0 * pov_pct)
     if side == "sell":
         n += 1
-    return max(2, min(int(n), _MAX_CHUNKS))
+    n_original = int(n)
+    n_capped = max(2, min(n_original, _MAX_CHUNKS))
+    return n_capped, n_original > _MAX_CHUNKS
 
 
 def _split_with_jitter(
@@ -319,7 +325,7 @@ def _split_with_jitter(
     rng: random.Random,
     jitter_pct: float,
 ) -> list[dict]:
-    """Split `total_shares` into n chunks with ±jitter, rounded to 100-share lots."""
+    """Split `total_shares` into n chunks with ±jitter, rounded to whole shares."""
     total_int = int(math.floor(total_shares))
     if total_int <= 0 or n <= 0:
         return []
@@ -343,7 +349,15 @@ def _split_with_jitter(
         eq = _round_to_100(total_shares / n)
         rounded = [eq] * (n - 1)
         last = total_int - sum(rounded)
-    rounded.append(max(0, last))
+    
+    max_chunk = max(1, _round_to_100(1.5 * total_shares / n))
+    if last > max_chunk:
+        rounded.append(max_chunk)
+        last_rem = max(0, last - max_chunk)
+        if last_rem > 0:
+            rounded.append(last_rem)
+    else:
+        rounded.append(max(0, last))
 
     chunks: list[dict] = []
     for i, shs in enumerate(rounded):
@@ -407,7 +421,7 @@ def build_chunks_pov(
 
     pov_pct = (total_shares / adv) * 100.0
     tier, label = _pov_tier(pov_pct, spread_bps)
-    n = _chunk_count(tier, pov_pct, side)
+    n, capped = _chunk_count(tier, pov_pct, side)
     impact_bps = estimate_impact_bps(total_shares, adv, sigma_bps=sigma_bps)
 
     # pov_pct / impact / n are ratios + counts (not raw sizes) -> safe to log.
@@ -436,6 +450,7 @@ def build_chunks_pov(
         "tier_label":     label,
         "est_impact_bps": impact_bps,
         "n_chunks":       len(chunks),
+        "capped_by_max":  capped,
     })
     return chunks, info
 
@@ -450,7 +465,7 @@ def build_chunks_pov(
 _GAP_PHASE_SPLIT = (0.30, 0.50, 0.20)
 
 
-def build_gap_capture_chunks(
+def build_premarket_chunks(
     total_shares: float,
     gap_price: float,
     standard_price: float,
@@ -458,7 +473,7 @@ def build_gap_capture_chunks(
 ) -> list[dict]:
     """
     Three-phase sell chunks with different limit prices per phase.
-    Returns chunk dicts with 'phase' field ('gap_capture', 'standard', 'sweep').
+    Returns chunk dicts with 'phase' field ('premarket', 'main', 'sweep').
     """
     if total_shares <= 0:
         return []
@@ -470,7 +485,7 @@ def build_gap_capture_chunks(
     phase_shares.append(max(0, total_int - sum(phase_shares)))
 
     prices = [gap_price, standard_price, sweep_price]
-    labels = ["gap_capture", "standard", "sweep"]
+    labels = ["premarket", "main", "sweep"]
     chunks: list[dict] = []
     idx = 0
     for shs, price, label in zip(phase_shares, prices, labels):

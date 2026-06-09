@@ -62,12 +62,12 @@ if (-not $SkipChecks) {
 
     # 2. Core packages
     Write-Step "  Core packages .........."
-    $coreOk = & python -c "import pydantic, pandas, yfinance, rich, loguru, keyring; print('ok')" 2>&1
+    $coreOk = & python -c "import pydantic, pandas, yfinance, rich, loguru, keyring, websockets; print('ok')" 2>&1
     if ($coreOk -ne "ok") {
         Write-Auto "fidelity-rebalancer"
         & python -m pip install -e $FRDir --quiet 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Fail "pip install failed.  Run manually: pip install -e `"$FRDir`"" }
-        $coreOk2 = & python -c "import pydantic, pandas, yfinance, rich, loguru, keyring; print('ok')" 2>&1
+        $coreOk2 = & python -c "import pydantic, pandas, yfinance, rich, loguru, keyring, websockets; print('ok')" 2>&1
         if ($coreOk2 -ne "ok") { Fail "Packages still missing after install.  Check pip output." }
         Write-Pass "installed OK"
     } else {

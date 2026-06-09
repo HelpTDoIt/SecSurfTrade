@@ -44,11 +44,13 @@ class _Features:
     pct_of_adv: Optional[float]
     px_tick: float
     vwap: Optional[float] = None
+    imbalance: Optional[float] = None
 
 
 def _features(
     buy: BuyAllocationRecord,
     quote: QuoteSnapshot,
+    l2: Level2Snapshot,
     adv: Optional[float],
     vwap: Optional[float] = None,
 ) -> _Features:
@@ -59,7 +61,13 @@ def _features(
     shares_target = float(buy.share_target or 0)
     pct_of_adv = (shares_target / adv * 100.0) if (adv and adv > 0) else None
     px_tick = tick(quote.ask or quote.bid or quote.last or 1.0)
+    total_bid = sum(getattr(b, 'size', 0) for b in getattr(l2, 'bids', []))
+    total_ask = sum(getattr(a, 'size', 0) for a in getattr(l2, 'asks', []))
+    total = total_bid + total_ask
+    imbalance = (total_bid / total) if total > 0 else None
+
     return _Features(
+        imbalance=imbalance,
         spread_bps=spread_bps,
         midpoint=midpoint,
         rel_vol=rel_vol,
@@ -106,58 +114,76 @@ def _decide(
 
     # Rule 1: tight spread + good volume → ask
     if tight and healthy_vol:
-        limit = round_to_tick(quote.ask, quote.ask)
-        return ("tight_spread_good_volume", "normal", limit, [
+        limit = round_to_tick(quote.bid, quote.bid)
+        return ("tight_spread_good_volume", "patient", limit, [
             _spread_bullet(f),
             _vol_bullet(f),
             _adv_bullet(f, buy),
-            f"LIMIT at ask ${limit:.4f} — likely to fill quickly.",
+            f"LIMIT at bid ${limit:.4f} — patient entry.",
         ], 0.25)
 
     # Rule 2: wide spread → midpoint
     if wide:
-        limit = round_to_tick(f.midpoint, quote.ask or quote.bid)
+        limit = round_to_tick(quote.bid + f.px_tick, quote.bid)
         return ("wide_spread", "patient", limit, [
             _spread_bullet(f),
-            "Wide spread — split the difference.",
-            f"LIMIT at midpoint ${limit:.4f}.",
+            "Wide spread — avoid crossing.",
+            f"LIMIT at bid+1 tick ${limit:.4f}.",
             _adv_bullet(f, buy),
         ], 0.25)
 
     # Rule 3: large position → ask−1 tick + smaller chunks
     if large_pos:
-        limit = round_to_tick(quote.ask - f.px_tick, quote.ask)
+        limit = round_to_tick(quote.bid, quote.bid)
         return ("large_position", "patient", limit, [
             _spread_bullet(f),
             _adv_bullet(f, buy),
             f"Large position (>{zc.buy_large_pct:g}% ADV) — smaller chunks to limit market impact.",
-            f"LIMIT at ask−1 tick ${limit:.4f}.",
+            f"LIMIT at bid ${limit:.4f}.",
         ], 0.125)   # half the default depth cap
+
+    # Rule 3.5: Order book strongly bid-heavy (> 0.80) -> adverse for buyer
+    if f.imbalance is not None and f.imbalance > 0.80:
+        limit = round_to_tick(quote.bid + f.px_tick, quote.bid)
+        return ("bid_heavy_book", "aggressive", limit, [
+            _spread_bullet(f),
+            f"Order book is heavily bid-skewed (imbalance {f.imbalance:.2f}) — expecting upward price pressure.",
+            f"LIMIT at bid+1 tick ${limit:.4f} to secure fill.",
+        ], 0.25)
+
+    # Rule 3.6: Order book strongly ask-heavy (< 0.20) -> favorable for buyer
+    if f.imbalance is not None and f.imbalance < 0.20:
+        limit = round_to_tick(quote.bid - f.px_tick, quote.bid)
+        return ("ask_heavy_book", "patient", limit, [
+            _spread_bullet(f),
+            f"Order book is heavily ask-skewed (imbalance {f.imbalance:.2f}) — expecting downward price pressure.",
+            f"LIMIT at bid-1 tick ${limit:.4f} to wait for drop.",
+        ], 0.25)
 
     # Rule 4: buying below VWAP → favorable, take the fill at ask
     if f.vwap and quote.last < f.vwap * 0.999:
-        limit = round_to_tick(quote.ask, quote.ask)
-        return ("below_vwap", "normal", limit, [
+        limit = round_to_tick(quote.bid, quote.bid)
+        return ("below_vwap", "patient", limit, [
             _spread_bullet(f),
             f"Last ${quote.last:.4f} is below VWAP ${f.vwap:.4f} — favorable entry.",
-            f"LIMIT at ask ${limit:.4f}.",
+            f"LIMIT at bid ${limit:.4f}.",
         ], 0.25)
 
     # Rule 5: buying above VWAP → paying up, be patient
     if f.vwap and quote.last > f.vwap * 1.002:
-        limit = round_to_tick(f.midpoint, quote.ask or quote.bid)
+        limit = round_to_tick(quote.bid, quote.bid)
         return ("above_vwap", "patient", limit, [
             _spread_bullet(f),
             f"Last ${quote.last:.4f} is above VWAP ${f.vwap:.4f} — paying up, be patient.",
-            f"LIMIT at midpoint ${limit:.4f}.",
+            f"LIMIT at bid ${limit:.4f}.",
         ], 0.25)
 
     # Default: ask, normal
-    limit = round_to_tick(quote.ask or quote.last or quote.bid, quote.ask or quote.bid)
+    limit = round_to_tick(quote.bid or quote.last or quote.ask, quote.bid or quote.ask)
     return ("default", "normal", limit, [
         _spread_bullet(f),
         _adv_bullet(f, buy),
-        f"No special condition — LIMIT at ask ${limit:.4f}.",
+        f"No special condition — LIMIT at bid ${limit:.4f}.",
     ], 0.25)
 
 
@@ -174,6 +200,8 @@ def _escalate_buy(
     quote: QuoteSnapshot,
     px_tick: float,
     market_minutes: Optional[int],
+    cumulative_volume: Optional[float] = None,
+    adv: Optional[float] = None,
 ) -> tuple[str, float, list[str]]:
     """Escalate buy urgency by time-of-day (delegates to engine.escalation).
 
@@ -181,7 +209,7 @@ def _escalate_buy(
     toward the ask.  Returns ``(urgency, limit, reasoning)``.
     """
     return _escalate(
-        "buy", urgency, limit_price, reasoning, quote, px_tick, market_minutes,
+        "buy", urgency, limit_price, reasoning, quote, px_tick, market_minutes, cumulative_volume, adv
     )
 
 
@@ -208,13 +236,13 @@ def generate_buy_strategy(
     """
     adv = ctx.adv if ctx.adv is not None else get_adv(buy.ticker)
 
-    feats = _features(buy, quote, adv, vwap=ctx.vwap)
+    feats = _features(buy, quote, l2, adv, vwap=ctx.vwap)
     rule, urgency, limit_price, reasoning, depth_override = _decide(
         feats, buy, quote, ctx.spread_ctx, size_ctx=ctx.size_ctx,
     )
 
     urgency, limit_price, reasoning = _escalate_buy(
-        urgency, limit_price, reasoning, quote, feats.px_tick, ctx.market_minutes,
+        urgency, limit_price, reasoning, quote, feats.px_tick, ctx.market_minutes, quote.volume, adv
     )
 
     # Use the strategy-chosen limit_price to size the budget.

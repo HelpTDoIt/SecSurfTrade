@@ -4,6 +4,7 @@
 # Scraper / OCR debug output
 debug/
 debug_*.png
+*_crop.png
 *_tree.txt
 temp
 temp.txt
@@ -30,6 +31,10 @@ plans/
 !fidelity_rebalancer/tests/fixtures/*.json
 !fidelity_rebalancer/accounts.example.json
 !strategy_map.example.json
+
+# Local tooling — AI agent workspaces and editor/session state
+.agents/
+.claude/
 
 # OS
 .DS_Store

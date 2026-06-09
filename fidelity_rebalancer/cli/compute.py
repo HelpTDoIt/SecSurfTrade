@@ -75,7 +75,11 @@ def _build_state(
             continue
         cfg = ACCOUNTS_CONFIG[acct_name]
         positions_dict: dict = accounts_raw[acct_name]["positions"]
-        spaxx_val = positions_dict.get("SPAXX**", {}).get("value", 0.0)
+        spaxx_val = 0.0
+        for sym, p in positions_dict.items():
+            s_up = sym.upper()
+            if s_up.startswith("SPAXX") or s_up.startswith("FDRXX") or s_up.startswith("FCASH") or s_up.startswith("CORE") or "CASH" in s_up:
+                spaxx_val += float(p.get("value", 0.0))
         pending_val = float(accounts_raw[acct_name].get("pending_activity", 0.0))
 
         account_inputs.append(
@@ -164,6 +168,7 @@ def _build_state(
                         shares=ch["shares"],
                         limit_price=ch["limit_price"],
                         cost=ch["cost"],
+                        vol5min=1_000_000.0,
                     )
                 )
 
@@ -198,6 +203,7 @@ def _build_state(
                         shares=ch["shares"],
                         limit_price=ch["limit_price"],
                         cost=ch["cost"],
+                        vol5min=1_000_000.0,
                     )
                 )
 
@@ -248,6 +254,75 @@ def _find_downloads_csvs() -> Path | None:
     return downloads if found else None
 
 
+
+def _check_mom_sanity_diff(current_state, current_path):
+    """D-5: Compare current strategy allocations against the previous month's export."""
+    import json
+    import logging
+    from pathlib import Path
+    logger = logging.getLogger(__name__)
+    
+    plans_dir = Path(current_path).parent
+    if not plans_dir.exists():
+        return
+        
+    # Find all plan_*.json or state_*.json excluding the current one
+    candidates = []
+    for p in plans_dir.glob("*.json"):
+        if p.name != Path(current_path).name and (p.name.startswith("plan_") or p.name.startswith("state_")):
+            candidates.append(p)
+            
+    if not candidates:
+        return
+        
+    # Sort by mtime
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    last_plan = candidates[0]
+    
+    try:
+        with open(last_plan, "r", encoding="utf-8") as f:
+            last_data = json.load(f)
+            
+        last_sells = last_data.get("computed", {}).get("sells", [])
+        last_buys = last_data.get("computed", {}).get("buy_allocations", [])
+        
+        last_totals = {}
+        for s in last_sells:
+            last_totals[s.get("strategy")] = last_totals.get(s.get("strategy"), 0) + s.get("est_proceeds", 0)
+        for b in last_buys:
+            last_totals[b.get("strategy")] = last_totals.get(b.get("strategy"), 0) + b.get("target_value", 0)
+            
+        last_total_pool = sum(last_totals.values())
+        if last_total_pool <= 0:
+            return
+            
+        curr_sells = current_state.computed.sells
+        curr_buys = current_state.computed.buy_allocations
+        
+        curr_totals = {}
+        for s in curr_sells:
+            curr_totals[s.strategy] = curr_totals.get(s.strategy, 0) + s.est_proceeds
+        for b in curr_buys:
+            curr_totals[b.strategy] = curr_totals.get(b.strategy, 0) + getattr(b, "target_value", 0)
+            
+        curr_total_pool = sum(curr_totals.values())
+        if curr_total_pool <= 0:
+            return
+            
+        import sys
+        for strat in set(last_totals.keys()) | set(curr_totals.keys()):
+            last_pct = (last_totals.get(strat, 0) / last_total_pool) * 100
+            curr_pct = (curr_totals.get(strat, 0) / curr_total_pool) * 100
+            
+            if abs(curr_pct - last_pct) > 5.0:
+                print(f"[WARN] MoM Sanity Diff: Strategy '{strat}' allocation changed by >5% "
+                      f"({last_pct:.1f}% -> {curr_pct:.1f}%). Verify if this shift is intentional.", file=sys.stderr)
+                      
+    except Exception as e:
+        import sys
+        print(f"[WARN] MoM sanity diff could not be computed: {e}", file=sys.stderr)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compute rebalance state from Fidelity CSVs + signals JSON"
@@ -291,7 +366,7 @@ def main() -> None:
 
     # Resolve CSV directory
     if args.inputs:
-        inputs_dir = Path(resolve_path(args.inputs))
+        inputs_dir = resolve_path(args.inputs)
     else:
         inputs_dir = _find_downloads_csvs()
         if inputs_dir is None:
@@ -303,8 +378,8 @@ def main() -> None:
             sys.exit(1)
         print(f"Auto-detected CSVs in: {inputs_dir}", file=sys.stderr)
 
-    signals_path = Path(resolve_path(args.signals))
-    export_path = Path(resolve_output_path(args.export))
+    signals_path = resolve_path(args.signals)
+    export_path = resolve_output_path(args.export)
 
     signals_data = json.loads(signals_path.read_text(encoding="utf-8"))
     signals: dict[str, dict] = signals_data["signals"]
@@ -358,6 +433,7 @@ def main() -> None:
     state = _build_state(accounts_raw, signals, closes, chunker=args.chunker)
     save_state(state, export_path)
     print(f"Wrote engine state -> {export_path}")
+    _check_mom_sanity_diff(state, export_path)
 
 
 if __name__ == "__main__":

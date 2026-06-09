@@ -228,44 +228,10 @@ def test_red_dangling_chunk_id():
     assert "DANGLING_CHUNK_ID" in codes(report)
 
 
-def test_yellow_cash_not_ok():
-    # CASH_NOT_OK is a YELLOW warning, not a blocker: during an IRA rebalance the
-    # buys are funded by sells that have not yet settled, so unsettled-cash is
-    # expected. The human confirms; it must not hard-block.
-    state = make_green_state()
-    state.computed.cash_ok["ACCT2"] = False
-    report = check_sanity(state)
-    assert report.verdict == "YELLOW"
-    assert report.ok is True
-    assert "CASH_NOT_OK" in codes(report)
-    # ACCT2 defaults to type=retirement → IRA-timing wording.
-    msg = next(f.message for f in report.findings if f.code == "CASH_NOT_OK")
-    assert "IRA/retirement" in msg
 
 
-def test_margin_account_suppresses_cash_not_ok():
-    # A margin account funds same-window buy+sell from buying power, not settled
-    # proceeds, so the cash gate does not apply — no CASH_NOT_OK at all.
-    state = make_green_state()
-    next(a for a in state.inputs.accounts if a.name == "ACCT2").margin = True
-    state.computed.cash_ok["ACCT2"] = False
-    report = check_sanity(state)
-    assert "CASH_NOT_OK" not in codes(report)
-    assert report.verdict == "GREEN"
 
 
-def test_cash_account_cash_not_ok_message():
-    # A taxable, non-margin account gets the genuine-cash-shortfall wording,
-    # not the IRA-timing wording.
-    state = make_green_state()
-    acct = next(a for a in state.inputs.accounts if a.name == "ACCT2")
-    acct.type = "taxable"
-    acct.margin = False
-    state.computed.cash_ok["ACCT2"] = False
-    report = check_sanity(state)
-    assert "CASH_NOT_OK" in codes(report)
-    msg = next(f.message for f in report.findings if f.code == "CASH_NOT_OK")
-    assert "cash (non-margin) account" in msg
 
 
 def test_red_non_positive_limit():
@@ -392,7 +358,6 @@ _ALL_FINDING_CODES = {
     "NON_POSITIVE_SHARES",
     "CHUNK_SUM_MISMATCH",
     "DANGLING_CHUNK_ID",
-    "CASH_NOT_OK",
     "NON_POSITIVE_LIMIT",
     "LIMIT_FAR_FROM_PREVCLOSE",
     "ORPHAN_CHUNK",

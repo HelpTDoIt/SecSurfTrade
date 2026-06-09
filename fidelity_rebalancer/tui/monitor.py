@@ -16,53 +16,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(_ROOT))
 
 import argparse
 
+from engine import observability
+
 _log = logging.getLogger("monitor")
-
-
-def _setup_logging(log_dir: Path, verbose: bool) -> None:
-    """Configure file + optional console logging.
-
-    A log file is always created at ``log_dir/monitor.log``.  When *verbose*
-    is True (i.e. ``--test`` flag is active) the file receives DEBUG messages
-    and a second StreamHandler echoes them to stderr.  In normal operation only
-    INFO and above go to the file and nothing is printed to the console (so the
-    Textual TUI isn't polluted).
-
-    Safe to call multiple times — ``logging.basicConfig`` is idempotent after
-    the first call, but we configure handlers explicitly so re-runs in tests
-    don't accumulate duplicate handlers.
-    """
-    log_dir.mkdir(parents=True, exist_ok=True)
-    root = logging.getLogger()
-    # Remove any handlers added by a previous call (e.g. in tests)
-    root.handlers.clear()
-
-    fmt = logging.Formatter(
-        "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    fh = logging.FileHandler(log_dir / "monitor.log", encoding="utf-8")
-    fh.setFormatter(fmt)
-    fh.setLevel(logging.DEBUG)  # file always captures everything
-
-    root.setLevel(logging.DEBUG if verbose else logging.INFO)
-    root.addHandler(fh)
-
-    if verbose:
-        # Console output only in --test mode so Textual layout isn't disrupted
-        # in normal use.  Textual redirects stdout/stderr but not to the TUI
-        # content area, so these lines appear in the terminal before the TUI
-        # takes over.
-        ch = logging.StreamHandler()
-        ch.setFormatter(fmt)
-        ch.setLevel(logging.DEBUG)
-        root.addHandler(ch)
 
 
 from rich.text import Text
@@ -177,10 +138,13 @@ def _market_minutes(now: datetime | None = None) -> int | None:
 # ── Fill detection ────────────────────────────────────────────────────────
 
 
+from state.schema import ChunkRecord
+
 def detect_and_log_fills(
     new_map: dict[str, "OrderRow"],
     last_filled: dict[str, float],
     journal: "Journal | None",
+    chunk_map: dict[str, ChunkRecord] | None = None,
 ) -> None:
     """Detect fill deltas between polls and write `fill` journal events.
 
@@ -227,6 +191,7 @@ def detect_and_log_fills(
                         "filled_qty": row.filled_qty,
                         "limit_price": row.limit_price,
                         "status": row.status.value,
+                        "plan_limit_price": chunk_map[order_id].limit_price if chunk_map and order_id in chunk_map else row.limit_price,
                     },
                 )
         last_filled[order_id] = row.filled_qty
@@ -291,7 +256,7 @@ class MonitorApp(App):
         self._quote_adapter = quote_adapter
         self._poll_seconds = poll_seconds
         self._journal = journal
-        self._plans_dir = plans_dir or Path("plans")
+        self._plans_dir = (plans_dir or Path("plans")).resolve()
 
         self._chunk_map = _chunk_lookup(self._state)
         self._sell_ids_by_account = _sell_chunk_ids_by_account(self._state)
@@ -316,6 +281,7 @@ class MonitorApp(App):
         # forward rather than silently discarding pre-monitor fills.
         self._last_filled: dict[str, float] = {}
         self._last_poll_error: str = ""
+        self._logged_deviations: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status-panel")
@@ -369,11 +335,12 @@ class MonitorApp(App):
         # self._order_map so that self._last_filled reflects the prior state.
         self._detect_and_log_fills(new_map)
 
+        self._check_deviations(new_map)
         self._order_map = new_map
 
         # Detect stalls (ignore snoozed chunks)
         threshold = self._state.inputs.config.stall_threshold_seconds
-        all_stalls = detect_stalls(list(new_map.values()), threshold, now)
+        all_stalls = detect_stalls(list(new_map.values()), threshold, now, chunk_map=self._chunk_map)
         self._stalls = [s for s in all_stalls if s.chunk_id not in self._snoozed]
 
         # Get re-quote suggestions
@@ -478,9 +445,44 @@ class MonitorApp(App):
             },
         )
 
+
+    def _check_deviations(self, new_map: dict[str, OrderRow]) -> None:
+        if self._scan_mode:
+            return
+        for order_id, row in new_map.items():
+            if order_id not in self._chunk_map:
+                continue
+            if order_id in self._logged_deviations:
+                continue
+                
+            ch = self._chunk_map[order_id]
+            
+            deviations = []
+            if abs(row.limit_price - ch.limit_price) > 0.005:
+                deviations.append(f"Price diff: plan {ch.limit_price:.4f} vs actual {row.limit_price:.4f}")
+            if abs(row.qty - ch.shares) > 0.5:
+                deviations.append(f"Size diff: plan {ch.shares:.0f} vs actual {row.qty:.0f}")
+                
+            if deviations:
+                self._log_event("deviation", {
+                    "chunk_id": order_id,
+                    "symbol": row.symbol,
+                    "plan_limit": ch.limit_price,
+                    "actual_limit": row.limit_price,
+                    "plan_qty": ch.shares,
+                    "actual_qty": row.qty,
+                    "reasons": deviations
+                })
+                self._logged_deviations.add(order_id)
+                # Wait, we only add if we logged it. What if it perfectly matches? 
+                # We should add to logged_deviations once we check it the first time so we don't keep checking.
+            
+            # Always add to logged deviations after first check
+            self._logged_deviations.add(order_id)
+
     def _detect_and_log_fills(self, new_map: dict[str, "OrderRow"]) -> None:
         """Delegate to the module-level helper, updating self._last_filled in place."""
-        detect_and_log_fills(new_map, self._last_filled, self._journal)
+        detect_and_log_fills(new_map, self._last_filled, self._journal, self._chunk_map)
 
     def _get_quote(self, ticker: str) -> QuoteSnapshot | None:
         if not self._quote_adapter or not ticker:
@@ -749,7 +751,7 @@ def main() -> None:
     # Anchor to the package root so logs always land in fidelity_rebalancer/logs/
     # regardless of which directory the user invokes the monitor from.
     log_dir = _ROOT / "logs"
-    _setup_logging(log_dir, verbose=args.test)
+    observability.setup_logging(log_dir, verbose=args.test, filename="monitor.log")
     _log.info(
         "monitor starting  scan=%s  test=%s  poll=%ds",
         args.scan,
@@ -793,7 +795,7 @@ def main() -> None:
         )
         plan_path = None
     else:
-        plan_path = Path(resolve_path(args.plan))
+        plan_path = resolve_path(args.plan)
         plan = PlanOutput.model_validate_json(plan_path.read_text(encoding="utf-8"))
 
     poll_seconds = args.poll_seconds

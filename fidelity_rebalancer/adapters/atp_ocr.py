@@ -20,6 +20,7 @@ Install:
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 import time
@@ -27,6 +28,8 @@ from datetime import datetime, date, timezone, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
+
+_log = logging.getLogger(__name__)
 
 import numpy as np
 from PIL import Image, ImageGrab
@@ -47,7 +50,7 @@ def enable_debug(save_dir: Path | str | None = None) -> None:
     global _DEBUG, _DEBUG_DIR
     _DEBUG = True
     if save_dir is not None:
-        _DEBUG_DIR = Path(save_dir)
+        _DEBUG_DIR = Path(save_dir).resolve().resolve()
         _DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -55,7 +58,7 @@ def _debug_save(img, label: str) -> None:
     """Save *img* (numpy array or PIL Image) to the debug directory with a timestamp."""
     ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
     fname = f"{ts}_{label}.png"
-    dest = (_DEBUG_DIR / fname) if _DEBUG_DIR else Path(fname)
+    dest = (_DEBUG_DIR / fname) if _DEBUG_DIR else Path(fname).resolve().resolve()
     if hasattr(img, "save"):
         img.save(dest)
     else:
@@ -155,7 +158,7 @@ def _capture_full_window() -> np.ndarray:
 
     if _DEBUG:
         dest = _debug_save(arr, "full_window")
-        print(f"[OCR DEBUG] PrintWindow capture {w}x{h}px -> {dest}")
+        _log.debug("[OCR DEBUG] PrintWindow capture %dx%dpx -> %s", w, h, dest)
     return arr
 
 
@@ -163,14 +166,13 @@ def _run_ocr(img: np.ndarray, label: str = "ocr") -> list[_Cell]:
     """Run RapidOCR and return _Cell list; saves debug image and prints hits if enabled."""
     if _DEBUG:
         dest = _debug_save(img, label)
-        print(f"[OCR DEBUG] {label}: image {img.shape[1]}x{img.shape[0]}px -> {dest}")
+        _log.debug("[OCR DEBUG] %s: image %dx%dpx -> %s", label, img.shape[1], img.shape[0], dest)
     ocr = _ocr_engine()
     result, _ = ocr(img)
     cells = _ocr_to_cells(result or [])
-    if _DEBUG:
-        print(f"[OCR DEBUG] {label}: {len(cells)} detections")
-        for c in cells:
-            print(f"  x={c.x:6.0f}  y={c.y:6.0f}  {c.text!r}")
+    _log.debug("[OCR DEBUG] %s: %d detections", label, len(cells))
+    for c in cells:
+        _log.debug("  x=%6.0f  y=%6.0f  %r", c.x, c.y, c.text)
     return cells
 
 
@@ -511,8 +513,9 @@ def _read_l2_ocr(symbol: str) -> Level2Snapshot:
     if _DEBUG:
         ph, pw = panel_crop.shape[:2]
         dest = _debug_save(panel_crop, f"l2_{sym}_crop")
-        print(
-            f"[L2 DEBUG] {sym} panel x={px0}..{px1} scaled {pw}x{ph}px (2x) -> {dest}"
+        _log.debug(
+            "[L2 DEBUG] %s panel x=%d..%d scaled %dx%dpx (2x) -> %s",
+            sym, px0, px1, pw, ph, dest,
         )
 
     ocr = _ocr_engine()
@@ -526,12 +529,12 @@ def _read_l2_ocr(symbol: str) -> Level2Snapshot:
     # Filter to below the data header row
     panel_cells = [c for c in all_cells if c.y >= panel["data_y"]]
 
-    if _DEBUG:
-        print(
-            f"[L2 DEBUG] {sym} data_y={panel['data_y']:.0f}  {len(panel_cells)} cells"
-        )
-        for c in sorted(panel_cells, key=lambda c: (c.y, c.x)):
-            print(f"  x={c.x:7.0f}  y={c.y:6.0f}  {c.text!r}")
+    _log.debug(
+        "[L2 DEBUG] %s data_y=%.0f  %d cells",
+        sym, panel["data_y"], len(panel_cells),
+    )
+    for c in sorted(panel_cells, key=lambda c: (c.y, c.x)):
+        _log.debug("  x=%7.0f  y=%6.0f  %r", c.x, c.y, c.text)
 
     rows = _cluster_rows(panel_cells)
     # img_width/2 is the fallback bid/ask split; pass 2*panel_center so the

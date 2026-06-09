@@ -159,7 +159,7 @@ def test_sell_via_ctx_matches_legacy():
     # Pinned expected values
     assert strat.rule == "tight_spread_small_position"
     assert strat.urgency == "normal"
-    assert strat.limit_price == pytest.approx(500.00)
+    assert strat.limit_price == pytest.approx(500.0)
     assert len(chunks) == 1
 
 
@@ -235,7 +235,7 @@ def test_buy_via_ctx_matches_legacy():
 
     # Pinned expected values
     assert strat.rule == "tight_spread_good_volume"
-    assert strat.urgency == "normal"
+    assert strat.urgency == "aggressive"
     assert strat.limit_price == pytest.approx(500.01)
     assert len(chunks) == 1
     total_cost = sum(c.cost for c in chunks)

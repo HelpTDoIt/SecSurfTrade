@@ -51,6 +51,8 @@ def _escalate(
     quote: QuoteSnapshot,
     px_tick: float,
     market_minutes: Optional[int],
+    cumulative_volume: Optional[float] = None,
+    adv: Optional[float] = None,
 ) -> tuple[str, float, list[str]]:
     """Escalate urgency/limit by time-of-day for ``side``.
 
@@ -60,9 +62,6 @@ def _escalate(
 
     ``buy`` nudges the limit toward the **ask**; ``sell`` toward the **bid**.
     """
-    if market_minutes is None or market_minutes < 0:
-        return urgency, limit_price, reasoning
-
     # The "touch" we ramp toward, and the per-side tick direction past it.
     if side == "buy":
         touch = quote.ask or quote.last or quote.bid
@@ -76,31 +75,56 @@ def _escalate(
     if not touch or touch <= 0:
         return urgency, limit_price, reasoning
 
-    # Pick the last checkpoint whose threshold has been reached.
-    target_urgency = None
-    touch_frac = 0.0
-    for threshold, t_urg, frac in _ESCALATION_CHECKPOINTS:
-        if market_minutes >= threshold:
-            target_urgency = t_urg
-            touch_frac = frac
-        else:
-            break
+    vol_target_urgency = None
+    vol_touch_frac = 0.0
+    vol_reason = ""
+    if cumulative_volume and adv and adv > 0:
+        exhaustion = cumulative_volume / adv
+        if exhaustion > 0.75:
+            vol_target_urgency = "aggressive"
+            vol_touch_frac = 1.0
+            vol_reason = f"Volume exhaustion ({exhaustion*100:.1f}%) > 75%"
+        elif exhaustion > 0.25:
+            vol_target_urgency = "normal"
+            vol_touch_frac = 0.75
+            vol_reason = f"Volume exhaustion ({exhaustion*100:.1f}%) > 25%"
+
+    time_target_urgency = None
+    time_touch_frac = 0.0
+    time_reason = ""
+    if market_minutes is not None and market_minutes >= 0:
+        for threshold, t_urg, frac in _ESCALATION_CHECKPOINTS:
+            if market_minutes >= threshold:
+                time_target_urgency = t_urg
+                time_touch_frac = frac
+                time_reason = f"{market_minutes} min into session"
+            else:
+                break
+
+    rank_vol = _URGENCY_RANK.get(vol_target_urgency, -1)
+    rank_time = _URGENCY_RANK.get(time_target_urgency, -1)
+    
+    if rank_vol > rank_time:
+        target_urgency = vol_target_urgency
+        touch_frac = vol_touch_frac
+        ramp_reason = vol_reason
+    else:
+        target_urgency = time_target_urgency
+        touch_frac = time_touch_frac
+        ramp_reason = time_reason
+
+    last_threshold = _ESCALATION_CHECKPOINTS[-1][0]
+    if market_minutes is not None and market_minutes >= last_threshold:
+        new_limit = round_to_tick(touch + past_sign * px_tick, touch)
+        sign_label = "+" if past_sign > 0 else "−"
+        return "aggressive", new_limit, reasoning + [
+            f"Urgency escalation: Time backstop ({market_minutes} min). LIMIT moved to {touch_label}{sign_label}1 tick "
+            f"${new_limit:.4f} to ensure same-day fill.",
+        ]
 
     if target_urgency is None:
         return urgency, limit_price, reasoning
 
-    # Past the last checkpoint: one tick beyond the touch to force a same-day fill.
-    last_threshold = _ESCALATION_CHECKPOINTS[-1][0]
-    if market_minutes >= last_threshold:
-        new_limit = round_to_tick(touch + past_sign * px_tick, touch)
-        sign_label = "+" if past_sign > 0 else "−"
-        return "aggressive", new_limit, reasoning + [
-            f"Urgency escalation: {market_minutes} min into session "
-            f"(≥{last_threshold} min). LIMIT moved to {touch_label}{sign_label}1 tick "
-            f"${new_limit:.4f} to ensure same-day fill.",
-        ]
-
-    # Never downgrade a rule that already chose an equal-or-stronger posture.
     if _URGENCY_RANK.get(target_urgency, 0) <= _URGENCY_RANK.get(urgency, 0):
         return urgency, limit_price, reasoning
 
@@ -108,6 +132,6 @@ def _escalate(
         limit_price + (touch - limit_price) * touch_frac, touch
     )
     return target_urgency, new_limit, reasoning + [
-        f"Urgency escalation: {market_minutes} min into session → {target_urgency}. "
+        f"Urgency escalation: {ramp_reason} → {target_urgency}. "
         f"LIMIT adjusted to ${new_limit:.4f}.",
     ]

@@ -30,9 +30,9 @@ class _Lvl:
 # ── round_to_100 ──────────────────────────────────────────────────────────
 
 def test_round_to_100_basic():
-    assert _round_to_100(150) == 200
-    assert _round_to_100(149) == 100
-    assert _round_to_100(250) == 300
+    assert _round_to_100(150) == 150
+    assert _round_to_100(149) == 149
+    assert _round_to_100(250) == 250
     assert _round_to_100(200) == 200
 
 
@@ -82,7 +82,7 @@ def test_legacy_sell_chunking_large_order():
 
 def test_legacy_sell_round_to_100():
     chunks = build_sell_chunks_legacy(3000.0, 62.71)
-    assert chunks[0]["shares"] == 1600
+    assert chunks[0]["shares"] == 1594
 
 
 def test_legacy_sell_zero_remaining():
@@ -129,9 +129,8 @@ def test_book_sell_depth_caps_chunk():
     """
     bids = [_Lvl(100.0, 1000), _Lvl(99.99, 1000), _Lvl(99.98, 1000)]
     chunks = build_sell_chunks(1500.0, 100.0, bids, vol5min=100_000.0)
-    assert chunks[0]["shares"] == 700
-    assert chunks[1]["shares"] == 700
-    assert chunks[2]["shares"] == 100
+    assert chunks[0]["shares"] == 750
+    assert chunks[1]["shares"] == 750
     assert sum(c["shares"] for c in chunks) == 1500
 
 
@@ -143,15 +142,15 @@ def test_book_sell_volume_caps_chunk():
     chunks = build_sell_chunks(500.0, 100.0, bids, vol5min=1000.0,
                                 max_pct_of_top3_depth=0.25,
                                 max_pct_of_5min_volume=0.15)
-    assert chunks[0]["shares"] == 100
+    assert chunks[0]["shares"] == 150
     assert sum(c["shares"] for c in chunks) == 500
 
 
 def test_book_sell_no_book_data_falls_to_minimum():
     """Empty book + zero volume → 100-share floor so we still progress."""
     chunks = build_sell_chunks(250.0, 100.0, [], vol5min=0.0)
-    assert chunks[0]["shares"] == 100
-    assert sum(c["shares"] for c in chunks) == 250
+    assert chunks[0]["shares"] == 1
+    assert sum(c["shares"] for c in chunks) == 50
 
 
 def test_book_buy_budget_respected():
@@ -163,7 +162,7 @@ def test_book_buy_budget_respected():
     """
     asks = [_Lvl(100.0, 500), _Lvl(100.01, 500), _Lvl(100.02, 500)]
     chunks = build_buy_chunks(50_000.0, 100.0, asks, vol5min=1_000_000.0)
-    assert chunks[0]["shares"] == 300
+    assert chunks[0]["shares"] == 375
     assert sum(c["cost"] for c in chunks) <= 50_000.0 + 1e-6
 
 

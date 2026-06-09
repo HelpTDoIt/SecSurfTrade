@@ -34,21 +34,40 @@ class RequoteSuggestion:
     rationale: list[str] = field(default_factory=list)
 
 
+from state.schema import ChunkRecord
+
 def detect_stalls(
     orders: list[OrderRow],
     threshold_seconds: int,
     now: datetime,
+    chunk_map: dict[str, ChunkRecord] | None = None,
 ) -> list[StallEvent]:
     """
     Return one StallEvent for each order that is PartiallyFilled and has
     not progressed for at least `threshold_seconds`.
     """
+
     stalls: list[StallEvent] = []
     for row in orders:
         if row.status != OrderStatus.PartiallyFilled:
             continue
+            
         elapsed = (now - row.last_update_at).total_seconds()
-        if elapsed >= threshold_seconds:
+        
+        # Dynamic threshold based on phase and volume
+        current_threshold = threshold_seconds
+        if chunk_map and row.order_id in chunk_map:
+            ch = chunk_map[row.order_id]
+            if ch.phase == "sweep":
+                current_threshold = 30  # very aggressive near close
+            else:
+                # Patient for thin tickers (if chunk is > 5% of 5min volume, it's thin/large)
+                if ch.vol5min and ch.vol5min > 0:
+                    pct = ch.shares / ch.vol5min
+                    if pct > 0.05:
+                        current_threshold = int(threshold_seconds * 1.5)
+                        
+        if elapsed >= current_threshold:
             stalls.append(
                 StallEvent(
                     chunk_id=row.order_id,
@@ -59,6 +78,7 @@ def detect_stalls(
                 )
             )
     return stalls
+
 
 
 def _book_from_quote(quote: QuoteSnapshot) -> Level2Snapshot:

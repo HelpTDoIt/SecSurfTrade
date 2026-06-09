@@ -63,7 +63,7 @@ def load_journal(paths: list[str]) -> tuple[list[dict], int, list[str]]:
 
     for path in paths:
         try:
-            text = Path(path).read_text(encoding="utf-8")
+            text = resolve_path(path).read_text(encoding="utf-8")
         except OSError:
             unreadable.append(path)
             continue
@@ -90,6 +90,10 @@ def load_journal(paths: list[str]) -> tuple[list[dict], int, list[str]]:
 @dataclass
 class JournalSummary:
     first_ts: str | None = None
+    slippage_notional: float = 0.0
+    slippage_avg_bps: float = 0.0
+    slippage_max_bps: float = 0.0
+    fills: list[dict] = field(default_factory=list)
     last_ts: str | None = None
     duration_seconds: float | None = None
     event_counts: dict[str, int] = field(default_factory=dict)
@@ -97,6 +101,52 @@ class JournalSummary:
         default_factory=list
     )  # raw entries, everything except _ROUTINE noise
     poll_errors: list[dict] = field(default_factory=list)
+
+
+
+def _calculate_slippage(fills: list[dict]) -> tuple[float, float, float]:
+    """Calculate total notional slippage, average bps, and max bps."""
+    if not fills:
+        return 0.0, 0.0, 0.0
+    
+    total_notional = 0.0
+    total_plan_notional = 0.0
+    max_bps = 0.0
+    
+    for f in fills:
+        plan_price = f.get("plan_limit_price") or f.get("limit_price")
+        actual_price = f.get("fill_price") or f.get("average_price") or plan_price
+        shares = f.get("fill_qty") or f.get("quantity") or 0.0
+        
+        if not plan_price or not actual_price or shares <= 0:
+            continue
+            
+        plan_notional = plan_price * shares
+        actual_notional = actual_price * shares
+        
+        # slippage = actual - plan (positive means we paid more or received less)
+        # For a buy, higher actual is worse (positive slippage)
+        # For a sell, lower actual is worse
+        # Assuming the caller treats positive as bad
+        side = f.get("side", "").lower()
+        if side == "buy":
+            slip_notional = actual_notional - plan_notional
+        else:
+            slip_notional = plan_notional - actual_notional
+            
+        slip_bps = 0.0
+        if plan_notional > 0:
+            slip_bps = (slip_notional / plan_notional) * 10000.0
+            
+        total_notional += slip_notional
+        total_plan_notional += plan_notional
+        max_bps = max(max_bps, slip_bps)
+        
+    avg_bps = 0.0
+    if total_plan_notional > 0:
+        avg_bps = (total_notional / total_plan_notional) * 10000.0
+        
+    return total_notional, avg_bps, max_bps
 
 
 def _parse_iso(ts: str) -> datetime | None:
@@ -186,7 +236,10 @@ def summarize(entries: list[dict]) -> JournalSummary:
             s.notable_events.append(entry)
             if etype == "poll_error":
                 s.poll_errors.append(entry)
+            elif etype == "fill":
+                s.fills.append(entry.get("payload", {}))
 
+    s.slippage_notional, s.slippage_avg_bps, s.slippage_max_bps = _calculate_slippage(s.fills)
     return s
 
 
@@ -372,6 +425,16 @@ def format_report(
         lines.append(f"  End     : {_to_local_display(summary.last_ts)}")
         lines.append(f"  Duration: {_fmt_duration(summary.duration_seconds)}")
 
+    lines.append("")
+    lines.append("EXECUTION SLIPPAGE")
+    lines.append(sep)
+    if summary.slippage_notional > 0:
+        lines.append(f"  Notional      : ${summary.slippage_notional:,.2f}")
+        lines.append(f"  Avg Slippage  : {summary.slippage_avg_bps:.1f} bps")
+        lines.append(f"  Max Slippage  : {summary.slippage_max_bps:.1f} bps")
+    else:
+        lines.append("  (No fills recorded)")
+
     # ----- Event tally -----
     lines.append("")
     lines.append("EVENT TALLY")
@@ -462,11 +525,11 @@ def main() -> None:
 
     # Resolve: try as-is first, then relative to package root
     raw_pattern = args.journal
-    resolved = resolve_path(raw_pattern)
+    resolved_pattern = str(resolve_path(raw_pattern))
 
     # Glob expansion -- try resolved pattern first, then original
-    files = glob.glob(resolved)
-    if not files and resolved != raw_pattern:
+    files = glob.glob(resolved_pattern)
+    if not files and resolved_pattern != raw_pattern:
         files = glob.glob(raw_pattern)
 
     if not files:

@@ -113,6 +113,7 @@ def recompute_buys(
     state: "RebalanceState",
     account: str,
     actual_proceeds: float,
+    buying_power_override: float | None = None,
 ) -> list[BuyAllocationRecord]:
     """Re-run the drift allocator for one account against its *realized* pool.
 
@@ -153,7 +154,7 @@ def recompute_buys(
     }
 
     snap = calc_trades(
-        cfg, positions, signals, state.inputs.prev_closes, acct.pending_activity
+        cfg, positions, signals, state.inputs.prev_closes, acct.pending_activity, buying_power_override
     )
     total_pool = snap["total_pool"]
     depl_cash = snap["depl_cash"]
@@ -194,7 +195,7 @@ def recompute_buys(
             }
         )
 
-    actual_avail = actual_proceeds + depl_cash
+    actual_avail = buying_power_override if buying_power_override is not None else (actual_proceeds + depl_cash)
     # Account name + dollars are position-revealing -> DEBUG; INFO keeps counts.
     _log.debug(
         "recompute_buys[%s]: proceeds=%.2f depl_cash=%.2f total_pool=%.2f "
