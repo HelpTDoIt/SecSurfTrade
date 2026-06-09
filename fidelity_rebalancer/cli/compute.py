@@ -22,7 +22,7 @@ sys.path.insert(0, str(_ROOT))
 from cli import resolve_output_path, resolve_path
 from adapters.csv_reader import read_fidelity_csv
 from engine import observability
-from engine.calculator import calc_trades
+from engine.calculator import calc_trades, parse_csv
 from engine.chunker import (
     build_buy_chunks,
     build_buy_chunks_legacy,
@@ -240,16 +240,15 @@ def _find_downloads_csvs() -> Path | None:
     found = []
     for p in candidates:
         try:
-            # Read just enough to find the Account Name header row
             text = p.read_text(encoding="utf-8-sig", errors="ignore")
-            # Fidelity CSVs include "Account Name" in the header
-            if "Account Name" in text:
-                # Check if the account name matches one we know
-                for line in text.splitlines():
-                    cols = line.split(",")
-                    if cols and len(cols) > 1 and cols[1].strip().strip('"').lower() in _keys_lower:
-                        found.append(p)
-                        break
+            # parse_csv resolves the Account Name column by header (skipping the
+            # leading metadata rows Fidelity prepends), so detection works
+            # regardless of column order.
+            rows = parse_csv(text)
+            if any(
+                r.get("Account Name", "").strip().lower() in _keys_lower for r in rows
+            ):
+                found.append(p)
         except Exception:
             continue
     return downloads if found else None
